@@ -559,7 +559,6 @@ namespace DubboNet.Clients.RegistryClient
                 throw new ArgumentException("yourNode is null");
             }
             ChildrenResult childrenResult = await GetChildrenAsync(yourNode.FullPath).ConfigureAwait(false);
-            //ShowLog($"---------{yourNode.Path}----------\r\n{childrenResult?.Children.MyToString("\n")}");
             yourNode.ClearChildren();
             if (childrenResult == null)
             {
