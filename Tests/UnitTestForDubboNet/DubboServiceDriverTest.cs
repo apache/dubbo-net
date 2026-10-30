@@ -40,14 +40,14 @@ namespace UnitTestForDubboNet
             dubboServiceEndPointInfos.Add(new DubboServiceEndPointInfo(){EndPoint = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("127.0.0.11"),1234), InnerDubboActuatorSuite = new TelnetDubboActuatorSuite(new System.Net.IPEndPoint(System.Net.IPAddress.Parse("127.0.0.11"),1234) , new DubboActuatorSuiteConf(){ IsAutoUpdateStatusInfo = false}) });
 
 
-            DubboServiceDriver dubboServiceDriver = new("UnitTester",dubboServiceEndPointInfos,new Dictionary<System.Net.IPEndPoint, DubboActuatorSuiteEndPintInfo>());
+            DubboServiceDriver dubboServiceDriver = new("UnitTester",dubboServiceEndPointInfos,new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>());
 
             if (loadBalanceMode == LoadBalanceMode.ShortestResponse)
             {
                 for (int i = 0; i < dubboServiceEndPointInfos.Count - 2; i++)
                 {
                     //SetDubboActuatorSuiteStatusByReflection(dubboServiceEndPointInfos[i].InnerDubboActuatorSuite, i);
-                    SetDubboActuatorSuiteStatusByReflection(dubboServiceDriver.InnerActuatorSuites[dubboServiceEndPointInfos[i].EndPoint].InnerDubboActuatorSuite, i);
+                    SetDubboActuatorSuiteStatusByReflection(dubboServiceDriver.InnerActuatorSuites[DubboEndpointKey.From(dubboServiceEndPointInfos[i])].InnerDubboActuatorSuite, i);
                 }
             }
 
@@ -75,7 +75,7 @@ namespace UnitTestForDubboNet
             using DubboServiceDriver driver = new DubboServiceDriver(
                 endpoint.Interface,
                 new List<DubboServiceEndPointInfo> { endpoint },
-                new Dictionary<System.Net.IPEndPoint, DubboActuatorSuiteEndPintInfo>());
+                new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>());
 
             IDubboActuatorSuite suite = driver.GetDubboActuatorSuite(LoadBalanceMode.Random);
 
@@ -99,7 +99,7 @@ namespace UnitTestForDubboNet
             using DubboServiceDriver driver = new DubboServiceDriver(
                 endpoint.Interface,
                 new List<DubboServiceEndPointInfo> { endpoint },
-                new Dictionary<System.Net.IPEndPoint, DubboActuatorSuiteEndPintInfo>());
+                new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>());
 
             IDubboActuatorSuite suite = driver.GetDubboActuatorSuite(LoadBalanceMode.Random);
 
@@ -141,7 +141,7 @@ namespace UnitTestForDubboNet
             using DubboServiceDriver driver = new DubboServiceDriver(
                 serviceName,
                 endpoints,
-                new Dictionary<System.Net.IPEndPoint, DubboActuatorSuiteEndPintInfo>());
+                new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>());
 
             for (int index = 0; index < 10; index++)
             {
@@ -169,7 +169,7 @@ namespace UnitTestForDubboNet
             using DubboServiceDriver driver = new DubboServiceDriver(
                 serviceName,
                 new List<DubboServiceEndPointInfo> { endpoint },
-                new Dictionary<System.Net.IPEndPoint, DubboActuatorSuiteEndPintInfo>());
+                new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>());
 
             Assert.Null(driver.GetDubboActuatorSuite(
                 LoadBalanceMode.Random,
@@ -180,7 +180,7 @@ namespace UnitTestForDubboNet
         [Fact]
         public void RemovingAllProviders_ReleasesOnlyUnsharedSuitesAndCanRecover()
         {
-            var shared = new Dictionary<System.Net.IPEndPoint, DubboActuatorSuiteEndPintInfo>();
+            var shared = new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>();
             DubboServiceEndPointInfo Endpoint(string service) =>
                 DubboServiceEndPointInfo.GetDubboServiceEndPointInfo(new Uri($"dubbo://127.0.0.1:20880/{service}?interface={service}"));
             using var first = new DubboServiceDriver("ServiceA", new() { Endpoint("ServiceA") }, shared);
@@ -209,12 +209,12 @@ namespace UnitTestForDubboNet
             DubboServiceEndPointInfo Endpoint(int port, string options = "") =>
                 DubboServiceEndPointInfo.GetDubboServiceEndPointInfo(new Uri($"dubbo://127.0.0.1:{port}/Service?interface=Service&{options}"));
             using var driver = new DubboServiceDriver("Service", new() { Endpoint(20880), Endpoint(20881), Endpoint(20882) }, new());
-            var originalConnection = driver.InnerActuatorSuites[Endpoint(20880).EndPoint].InnerDubboActuatorSuite;
+            var originalConnection = driver.InnerActuatorSuites[DubboEndpointKey.From(Endpoint(20880))].InnerDubboActuatorSuite;
             driver.UpdateActuatorSuiteEndPoints(new() { Endpoint(20880, "weight=0"), Endpoint(20881, "disabled=true"), Endpoint(20882) });
-            Assert.Same(originalConnection, driver.InnerActuatorSuites[Endpoint(20880).EndPoint].InnerDubboActuatorSuite);
+            Assert.Same(originalConnection, driver.InnerActuatorSuites[DubboEndpointKey.From(Endpoint(20880))].InnerDubboActuatorSuite);
             Assert.Equal(2, driver.InnerActuatorSuites.Count);
             for (int i = 0; i < 30; i++)
-                Assert.Same(driver.InnerActuatorSuites[Endpoint(20882).EndPoint].InnerDubboActuatorSuite,
+                Assert.Same(driver.InnerActuatorSuites[DubboEndpointKey.From(Endpoint(20882))].InnerDubboActuatorSuite,
                     driver.GetDubboActuatorSuite(mode, i.ToString()));
             driver.UpdateActuatorSuiteEndPoints(new() { Endpoint(20880, "weight=0") });
             Assert.Null(driver.GetDubboActuatorSuite(mode, "key"));

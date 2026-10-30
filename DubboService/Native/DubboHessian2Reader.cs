@@ -12,6 +12,9 @@ namespace DubboNet.DubboService.Native
     /// </summary>
     internal sealed class DubboHessian2Reader
     {
+        // Also used when expanding references into JSON-compatible response values.
+        internal const int MaxNestingDepth = 64;
+        private int _depth;
         private sealed class ClassDefinition
         {
             public string TypeName { get; set; }
@@ -56,6 +59,15 @@ namespace DubboNet.DubboService.Native
         /// <para>EN: Reads the next dynamic Hessian2 value.</para>
         /// </summary>
         public object ReadValue()
+        {
+            if (_depth >= MaxNestingDepth)
+                throw new InvalidDataException($"Hessian2 nesting exceeds the limit of {MaxNestingDepth}.");
+            _depth++;
+            try { return ReadValueCore(); }
+            finally { _depth--; }
+        }
+
+        private object ReadValueCore()
         {
             byte tag = ReadByte();
             if (tag == (byte)'N') return null;

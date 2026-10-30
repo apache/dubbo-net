@@ -20,6 +20,32 @@ public class MyNacosTest
     private const string Address = "nacos://localhost:8848";
 
     [Fact]
+    public async Task DiscoveryPreservesSameSocketVersionsGroupsAndProtocols()
+    {
+        var server = new FakeNacos();
+        server.Add("1", 20880);
+        server.Add("2", 20880);
+        server.Instances[server.Services[1]][0].Metadata["version"] = "2";
+        server.Instances[server.Services[1]][0].Metadata["group"] = "canary";
+        var triple = FakeNacos.Provider(20880);
+        triple.Metadata["protocol"] = "tri";
+        server.Instances[server.Services[0]].Add(triple);
+        server.Instances[server.Services[0]].Add(FakeNacos.Provider(20880)); // Exact duplicate.
+        using var nacos = server.CreateClient();
+        foreach (var providers in new[]
+        {
+            await nacos.GetProvidersAsync(Service, Group),
+            await nacos.GetProviderEndPointsAsync(Service, Group, new object(), _ => Task.CompletedTask)
+        })
+        {
+            Assert.Equal(3, providers.Count);
+            Assert.Contains(providers, item => item.Scheme == "dubbo" && item.Version == "1" && item.Group == "g");
+            Assert.Contains(providers, item => item.Scheme == "dubbo" && item.Version == "2" && item.Group == "canary");
+            Assert.Contains(providers, item => item.Scheme == "tri" && item.Version == "1");
+        }
+    }
+
+    [Fact]
     public void PublicApi_DoesNotExposeNacosSdkTypes()
     {
         Assert.True(typeof(MyNacos).IsPublic);

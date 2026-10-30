@@ -33,9 +33,10 @@ namespace DubboNet.Clients
 
         private sealed class MethodState
         {
-            internal readonly Dictionary<IPEndPoint, MethodProvider> Providers = new();
+            internal readonly Dictionary<DubboEndpointKey, MethodProvider> Providers = new();
             internal double LastUsed;
-            internal MethodProvider For(IPEndPoint endpoint)
+            internal MethodProvider For(DubboServiceEndPointInfo endpoint) => For(DubboEndpointKey.From(endpoint));
+            internal MethodProvider For(DubboEndpointKey endpoint)
             {
                 if (!Providers.TryGetValue(endpoint, out var provider)) Providers.Add(endpoint, provider = new MethodProvider());
                 return provider;
@@ -48,19 +49,23 @@ namespace DubboNet.Clients
             internal readonly long[] PrefixWeights;
             internal readonly long TotalWeight;
             internal DubboSuiteConsistentHash Hash;
+            internal Dictionary<IPEndPoint, DubboServiceEndPointInfo> HashProviders;
 
             internal CandidateSet(IEnumerable<DubboServiceEndPointInfo> providers)
             {
-                Providers = providers.OrderBy(item => item.EndPoint.ToString(), StringComparer.Ordinal).ToArray();
+                Providers = providers.OrderBy(item => item.EndPoint.ToString(), StringComparer.Ordinal)
+                    .ThenBy(item => item.Scheme, StringComparer.Ordinal)
+                    .ThenBy(item => item.Version, StringComparer.Ordinal)
+                    .ThenBy(item => item.Group, StringComparer.Ordinal).ToArray();
                 PrefixWeights = new long[Providers.Length];
                 for (int i = 0; i < Providers.Length; i++) PrefixWeights[i] = TotalWeight += Providers[i].Weight;
             }
         }
 
         private readonly object _sync = new();
-        private readonly Dictionary<IPEndPoint, DubboServiceEndPointInfo> _endpoints = new();
-        private readonly Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo> _shared;
-        private readonly Dictionary<int, CandidateSet> _candidates = new();
+        private readonly Dictionary<DubboEndpointKey, DubboServiceEndPointInfo> _endpoints = new();
+        private readonly Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo> _shared;
+        private readonly Dictionary<(int Protocol, string Version, string Group), CandidateSet> _candidates = new();
         private readonly Dictionary<string, MethodState> _methods = new(StringComparer.Ordinal);
         private readonly DubboServiceDriverConf _configuration;
         private readonly Func<double> _clock;
@@ -72,12 +77,12 @@ namespace DubboNet.Clients
         public string ServiceName { get; }
         public DateTime LastActivateTime => new DateTime(System.Threading.Interlocked.Read(ref _lastActivateTicks));
         // Callers cannot enumerate a dictionary while a registry watcher mutates it.
-        public Dictionary<IPEndPoint, DubboServiceEndPointInfo> InnerActuatorSuites
-        { get { lock (_sync) return new Dictionary<IPEndPoint, DubboServiceEndPointInfo>(_endpoints); } }
+        public Dictionary<DubboEndpointKey, DubboServiceEndPointInfo> InnerActuatorSuites
+        { get { lock (_sync) return new Dictionary<DubboEndpointKey, DubboServiceEndPointInfo>(_endpoints); } }
         internal int ProviderCount { get { lock (_sync) return _endpoints.Count; } }
 
         public DubboServiceDriver(string serviceName, List<DubboServiceEndPointInfo> dbEpList,
-            Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo> dubboActuatorSuiteCollection,
+            Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo> dubboActuatorSuiteCollection,
             DubboServiceDriverConf dubboServiceDriverConf = null, Func<double> clock = null,
             Func<long, long> random = null, Func<DubboServiceEndPointInfo, IDubboActuatorSuite> factory = null)
         {
@@ -129,11 +134,11 @@ namespace DubboNet.Clients
                 lock (_sync)
                 {
                     if (_disposed) return 0;
-                    var latest = dbEpList.Where(item => item.Disabled != true).Select(item => item.RoutingSnapshot()).GroupBy(item => item.EndPoint)
+                    var latest = dbEpList.Where(item => item.Disabled != true).Select(item => item.RoutingSnapshot()).GroupBy(DubboEndpointKey.From)
                         .ToDictionary(group => group.Key, group => group.Last());
                     // Invalidate before mutating, including when creating a new connection fails.
                     _candidates.Clear();
-                    foreach (IPEndPoint endpoint in _endpoints.Keys.Where(key => !latest.ContainsKey(key)).ToArray())
+                    foreach (DubboEndpointKey endpoint in _endpoints.Keys.Where(key => !latest.ContainsKey(key)).ToArray())
                     {
                         _endpoints.Remove(endpoint);
                         foreach (MethodState method in _methods.Values)
@@ -163,7 +168,7 @@ namespace DubboNet.Clients
                                 if (!_shared.TryGetValue(pair.Key, out var shared))
                                 {
                                     var suite = _factory(endpoint) ?? throw new InvalidOperationException("The provider factory returned no actuator suite.");
-                                    shared = new DubboActuatorSuiteEndPintInfo { EndPoint = pair.Key, ActuatorSuite = suite };
+                                    shared = new DubboActuatorSuiteEndPintInfo { EndPoint = endpoint.EndPoint, ActuatorSuite = suite };
                                     _shared.Add(pair.Key, shared);
                                 }
                                 shared.ReferenceCount++;
@@ -197,12 +202,13 @@ namespace DubboNet.Clients
                 MethodState method = Method(invocation);
                 DubboServiceEndPointInfo endpoint = Select(mode, query, protocol, invocation, method);
                 if (endpoint == null) return null;
-                MethodProvider provider = method.For(endpoint.EndPoint);
+                DubboEndpointKey endpointKey = DubboEndpointKey.From(endpoint);
+                MethodProvider provider = method.For(endpointKey);
                 RequestLoadStatistics statistics = provider.Statistics;
-                lock (_shared) _shared[endpoint.EndPoint].ReferenceCount++;
+                lock (_shared) _shared[endpointKey].ReferenceCount++;
                 // Selection and active increment are indivisible to competing requests on this driver.
                 return new LoadBalancedInvocation(endpoint.InnerDubboActuatorSuite, statistics, _clock,
-                    () => ReleaseInvocation(endpoint.EndPoint, method, provider));
+                    () => ReleaseInvocation(endpointKey, method, provider));
             }
         }
 
@@ -212,11 +218,16 @@ namespace DubboNet.Clients
             if ((uint)mode > (uint)LoadBalanceMode.P2CLoadBalance) throw new ArgumentOutOfRangeException(nameof(mode));
             System.Threading.Interlocked.Exchange(ref _lastActivateTicks, DateTime.Now.Ticks);
             if (_disposed) return null;
-            int key = protocol.HasValue ? (int)protocol.Value : -1;
+            string version = string.IsNullOrWhiteSpace(invocation?.Version) ? null : invocation.Version;
+            string group = string.IsNullOrWhiteSpace(invocation?.Group) ? null : invocation.Group;
+            var key = (protocol.HasValue ? (int)protocol.Value : -1, version, group);
             if (!_candidates.TryGetValue(key, out var set))
             {
                 set = new CandidateSet(_endpoints.Values.Where(item => item.Disabled != true && item.Weight > 0
-                    && (!protocol.HasValue || item.InnerDubboActuatorSuite.ProtocolType == protocol)));
+                    && (!protocol.HasValue || item.InnerDubboActuatorSuite.ProtocolType == protocol)
+                    && (version == null || string.Equals(item.Version, version, StringComparison.Ordinal))
+                    && (group == null || string.Equals(item.Group, group, StringComparison.Ordinal))));
+                if (_candidates.Count >= 1024) _candidates.Clear();
                 _candidates.Add(key, set);
             }
             DubboServiceEndPointInfo[] providers = set.Providers;
@@ -231,20 +242,22 @@ namespace DubboNet.Clients
                     if (set.Hash == null)
                     {
                         set.Hash = new DubboSuiteConsistentHash(160);
-                        set.Hash.Init(providers.Select(item => item.EndPoint));
+                        set.HashProviders = providers.GroupBy(item => item.EndPoint)
+                            .ToDictionary(group => group.Key, group => group.First());
+                        set.Hash.Init(set.HashProviders.Keys);
                     }
-                    return _endpoints[set.Hash.GetNode(query)];
+                    return set.HashProviders[set.Hash.GetNode(query)];
                 case LoadBalanceMode.RoundRobin:
                     state = method ?? Method(invocation);
                     DubboServiceEndPointInfo best = null;
                     long maximum = long.MinValue;
                     foreach (var provider in providers)
                     {
-                        long current = state.For(provider.EndPoint).CurrentWeight += provider.Weight;
+                        long current = state.For(provider).CurrentWeight += provider.Weight;
                         provider.NowDispatchWeight = (int)Math.Clamp(current, int.MinValue, int.MaxValue);
                         if (current > maximum) { maximum = current; best = provider; }
                     }
-                    long remaining = state.For(best.EndPoint).CurrentWeight -= set.TotalWeight;
+                    long remaining = state.For(best).CurrentWeight -= set.TotalWeight;
                     best.NowDispatchWeight = (int)Math.Clamp(remaining, int.MinValue, int.MaxValue);
                     return best;
                 case LoadBalanceMode.LeastActive:
@@ -252,8 +265,8 @@ namespace DubboNet.Clients
                 case LoadBalanceMode.P2CLoadBalance:
                     state = method ?? Method(invocation);
                     int a = WeightedIndex(set), b = WeightedIndex(set, a);
-                    int activeA = state.For(providers[a].EndPoint).Statistics.Active;
-                    int activeB = state.For(providers[b].EndPoint).Statistics.Active;
+                    int activeA = state.For(providers[a]).Statistics.Active;
+                    int activeB = state.For(providers[b]).Statistics.Active;
                     if (activeA != activeB) return providers[activeA < activeB ? a : b];
                     return _random((long)providers[a].Weight + providers[b].Weight) < providers[a].Weight ? providers[a] : providers[b];
                 case LoadBalanceMode.ShortestResponse:
@@ -278,7 +291,7 @@ namespace DubboNet.Clients
             DubboServiceEndPointInfo best = null;
             foreach (var provider in providers)
             {
-                int active = state.For(provider.EndPoint).Statistics.Active;
+                int active = state.For(provider).Statistics.Active;
                 if (active < minimum) { minimum = active; total = 0; best = null; }
                 if (active == minimum && _random(total += provider.Weight) < provider.Weight) best = provider;
             }
@@ -292,7 +305,7 @@ namespace DubboNet.Clients
             DubboServiceEndPointInfo best = null, probe = null;
             foreach (var provider in providers)
             {
-                var statistics = state.For(provider.EndPoint).Statistics;
+                var statistics = state.For(provider).Statistics;
                 var snapshot = statistics.Read(now);
                 if (!snapshot.HasSamples)
                 {
@@ -309,7 +322,7 @@ namespace DubboNet.Clients
             }
             if (probe != null)
             {
-                state.For(probe.EndPoint).Statistics.MarkProbe(now);
+                state.For(probe).Statistics.MarkProbe(now);
                 return probe;
             }
             return best ?? LeastActive(providers, state);
@@ -337,7 +350,7 @@ namespace DubboNet.Clients
             return state;
         }
 
-        private void ReleaseInvocation(IPEndPoint endpoint, MethodState method, MethodProvider provider)
+        private void ReleaseInvocation(DubboEndpointKey endpoint, MethodState method, MethodProvider provider)
         {
             if (provider.Retired && provider.Statistics.Active == 0)
                 lock (_sync)
@@ -348,7 +361,7 @@ namespace DubboNet.Clients
             if (retired != null) DisposeRetired(new[] { retired });
         }
 
-        private IDubboActuatorSuite ReleaseReference(IPEndPoint endpoint)
+        private IDubboActuatorSuite ReleaseReference(DubboEndpointKey endpoint)
         {
             lock (_shared)
             {
@@ -376,7 +389,7 @@ namespace DubboNet.Clients
             {
                 if (_disposed) return;
                 _disposed = true;
-                foreach (IPEndPoint endpoint in _endpoints.Keys)
+                foreach (DubboEndpointKey endpoint in _endpoints.Keys)
                 {
                     IDubboActuatorSuite unused = ReleaseReference(endpoint);
                     if (unused != null) retired.Add(unused);

@@ -518,7 +518,7 @@ namespace DubboNet.Clients.RegistryClient
                 }
             }
             return providers
-                .GroupBy(item => $"{item.Scheme}://{item.EndPoint}", StringComparer.OrdinalIgnoreCase)
+                .GroupBy(DubboEndpointKey.From)
                 .Select(grouping => grouping.First())
                 .OrderBy(item => item.EndPoint?.ToString(), StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -749,7 +749,7 @@ namespace DubboNet.Clients.RegistryClient
                 }
             }
             return endpoints
-                .GroupBy(item => $"{item.Scheme}://{item.EndPoint}", StringComparer.OrdinalIgnoreCase)
+                .GroupBy(DubboEndpointKey.From)
                 .Select(group => group.First())
                 .ToArray();
         }

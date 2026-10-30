@@ -229,15 +229,16 @@ public class LoadBalancingTest
     }
 
     [Fact]
-    public void MethodsOverloadsVersionsAndGroupsDoNotShareStatistics()
+    public void MethodsAndOverloadsDoNotShareStatistics()
     {
         using var fixture = new Fixture(1);
         using var original = fixture.Reserve(0);
         foreach (var invocation in new[]
         {
             Fixture.Invocation("other"), Fixture.Invocation(parameter: "int"),
-            new DubboInvocation { Service = "com.foo.Service", Method = "echo", Version = "2" },
-            new DubboInvocation { Service = "com.foo.Service", Method = "echo", Group = "other" }
+            // Explicit version/group routing is covered separately below; do not
+            // reserve calls for identities that this fixture does not provide.
+            Fixture.Invocation("other", parameter: "int")
         })
         {
             using var distinct = fixture.Reserve(0, invocation);
@@ -401,7 +402,7 @@ public class LoadBalancingTest
     [Fact]
     public void FailedProviderUpdateDoesNotLeaveStaleCachedCandidatesOrUndisposedConnections()
     {
-        var shared = new Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo>();
+        var shared = new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>();
         var suite = DispatchProxy.Create<IDubboActuatorSuite, SuiteProxy>();
         var proxy = (SuiteProxy)(object)suite;
         DubboServiceEndPointInfo Endpoint(int port) => new() { EndPoint = new IPEndPoint(IPAddress.Loopback, port) };
@@ -445,7 +446,7 @@ public class LoadBalancingTest
     [Fact]
     public void FailedMultiProviderConstructionRollsBackEarlierConnectionReferences()
     {
-        var shared = new Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo>();
+        var shared = new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>();
         var suite = DispatchProxy.Create<IDubboActuatorSuite, SuiteProxy>();
         var proxy = (SuiteProxy)(object)suite;
         var endpoints = new List<DubboServiceEndPointInfo>
@@ -470,7 +471,7 @@ public class LoadBalancingTest
         published[0].Disabled = true;
         published[0].EndPoint.Port = 31000;
         var snapshot = fixture.Driver.InnerActuatorSuites;
-        var originalEndpoint = new IPEndPoint(IPAddress.Loopback, 20880);
+        var originalEndpoint = DubboEndpointKey.From(fixture.Endpoints(1)[0]);
         Assert.Equal(1, snapshot[originalEndpoint].Weight);
         Assert.NotEqual(true, snapshot[originalEndpoint].Disabled);
         Assert.Equal(20880, snapshot[originalEndpoint].EndPoint.Port);
@@ -482,7 +483,7 @@ public class LoadBalancingTest
     [Fact]
     public async Task ConcurrentCollectionDisposalAndRegistryCallbacksCannotResurrectDrivers()
     {
-        var shared = new Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo>();
+        var shared = new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>();
         using var collection = new DubboDriverCollection(shared, null);
         var endpoints = new List<DubboServiceEndPointInfo>
         { new() { EndPoint = new IPEndPoint(IPAddress.Loopback, 20880), Scheme = "dubbo", Interface = "com.foo.Service" } };
@@ -515,7 +516,7 @@ public class LoadBalancingTest
     {
         internal double Now;
         internal readonly DubboServiceDriver Driver;
-        internal readonly Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo> Shared = new();
+        internal readonly Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo> Shared = new();
         private readonly DubboActuatorProtocolType _protocol;
         private readonly ConcurrentDictionary<IDubboActuatorSuite, SuiteProxy> _proxies = new();
         private readonly Dictionary<int, string> _hashKeys = new();

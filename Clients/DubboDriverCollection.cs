@@ -47,7 +47,7 @@ namespace DubboNet.Clients
         /// 内部维持的DubboActuatorSuite（用于最大程度复用链接）
         /// EN: Shared actuator suites retained to maximize connection reuse across services.
         /// </summary>
-        private readonly Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo> _sourceDubboActuatorSuiteCollection;
+        private readonly Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo> _sourceDubboActuatorSuiteCollection;
 
         /// <summary>
         /// 内部维持的DubboServiceDriver（使用_sourceDubboActuatorSuiteCollection资源，复用服务资源）
@@ -70,7 +70,7 @@ namespace DubboNet.Clients
         /// <param name="dubboActuatorSuiteCollection">跨服务共享的执行器集合。EN: Actuator-suite collection shared across services.</param>
         /// <param name="dubboDriverCollectionConf">集合配置；为空时使用默认配置。EN: Collection configuration; defaults are used when null.</param>
         /// <exception cref="ArgumentNullException"><paramref name="dubboActuatorSuiteCollection"/> 为空。EN: <paramref name="dubboActuatorSuiteCollection"/> is null.</exception>
-        public DubboDriverCollection(Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo> dubboActuatorSuiteCollection , DubboDriverCollectionConf dubboDriverCollectionConf)
+        public DubboDriverCollection(Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo> dubboActuatorSuiteCollection , DubboDriverCollectionConf dubboDriverCollectionConf)
         {
             if (dubboActuatorSuiteCollection == null)
             {

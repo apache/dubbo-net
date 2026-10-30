@@ -210,7 +210,7 @@ namespace DubboNet.Clients
 
         private DubboDriverCollection _dubboDriverCollection;
 
-        private Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo> _retainDubboActuatorSuiteCollection = new Dictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo>();
+        private Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo> _retainDubboActuatorSuiteCollection = new Dictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>();
 
         private ConcurrentDictionary<string, Task<DubboServiceEndPointInfos>> _concurrentGetProviderEndPointsTasks = new ConcurrentDictionary<string, Task<DubboServiceEndPointInfos>>();
 
@@ -229,7 +229,7 @@ namespace DubboNet.Clients
         /// 获取只读的DubboActuatorSuiteCollection
         /// EN: Gets the read-only collection of shared actuator suites.
         /// </summary>
-        internal ReadOnlyDictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo> DubboActuatorSuiteCollection => new ReadOnlyDictionary<IPEndPoint, DubboActuatorSuiteEndPintInfo>(_retainDubboActuatorSuiteCollection);
+        internal ReadOnlyDictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo> DubboActuatorSuiteCollection => new ReadOnlyDictionary<DubboEndpointKey, DubboActuatorSuiteEndPintInfo>(_retainDubboActuatorSuiteCollection);
 
         /// <summary>
         /// 注册数据根路径；ZooKeeper 中为节点路径，Nacos 中为 Naming 分组。

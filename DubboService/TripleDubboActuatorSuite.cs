@@ -221,6 +221,10 @@ namespace DubboNet.DubboService
 
             try
             {
+                // ResponseHeadersRead ends HttpClient.Timeout at the headers. Keep a
+                // single deadline alive until the complete body has been consumed.
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(timeoutMilliseconds);
                 using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, requestPath)
                 {
                     Version = HttpVersion.Version11,
@@ -236,9 +240,9 @@ namespace DubboNet.DubboService
                 using HttpResponseMessage response = await _httpClient.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken).ConfigureAwait(false);
+                    timeout.Token).ConfigureAwait(false);
                 string responseBody = await response.Content
-                    .ReadAsStringAsync(cancellationToken)
+                    .ReadAsStringAsync(timeout.Token)
                     .ConfigureAwait(false);
 
                 stopwatch.Stop();

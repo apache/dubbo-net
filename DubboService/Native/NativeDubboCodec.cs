@@ -674,8 +674,10 @@ namespace DubboNet.DubboService.Native
                 new HashSet<object>(ReferenceEqualityComparer.Instance));
         }
 
-        private static object ToJsonCompatible(object value, HashSet<object> activeReferences)
+        private static object ToJsonCompatible(object value, HashSet<object> activeReferences, int depth = 0)
         {
+            if (depth >= DubboHessian2Reader.MaxNestingDepth)
+                throw new InvalidDataException($"Hessian2 nesting exceeds the limit of {DubboHessian2Reader.MaxNestingDepth}.");
             if (value == null
                 || value is string
                 || value is bool
@@ -708,7 +710,7 @@ namespace DubboNet.DubboService.Native
                     foreach (DictionaryEntry entry in dictionary)
                     {
                         normalized[entry.Key?.ToString() ?? "null"] =
-                            ToJsonCompatible(entry.Value, activeReferences);
+                            ToJsonCompatible(entry.Value, activeReferences, depth + 1);
                     }
                 }
                 finally
@@ -729,7 +731,7 @@ namespace DubboNet.DubboService.Native
                 {
                     foreach (object item in enumerable)
                     {
-                        normalized.Add(ToJsonCompatible(item, activeReferences));
+                        normalized.Add(ToJsonCompatible(item, activeReferences, depth + 1));
                     }
                 }
                 finally
