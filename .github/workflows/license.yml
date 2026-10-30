@@ -1,16 +1,23 @@
-name: License header audit
+name: License header check
 
-# Manual audit while provenance and inherited headers are being settled in #2.
-# Enable automatic PR enforcement only after that review; this is not a passing
-# compliance gate or a substitute for the SGA/ICLA process.
+# Checks source headers only; passing does not establish SGA/ICLA filing or IP
+# clearance. The project owner confirmed the contributed source authorship.
 on:
+  push:
+    branches: [main, codex/import-dubbonet-history]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: license-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  license-header-audit:
+  license-header-check:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
