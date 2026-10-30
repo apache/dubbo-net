@@ -8,4 +8,10 @@ This product includes software originally developed in the DubboNet project
 (https://github.com/lulianqi/DubboNet).
 Copyright (c) 2023 lulianqi (mycllq@hotmail.com)
 The original MIT permission and disclaimer are preserved in
-LICENSES/DubboNet-MIT.txt. Original notices in source files are retained.
+LICENSES/DubboNet-MIT.txt.
+
+Original author attribution for the contributed NetService/Telnet/ExTelnet.cs:
+Copyright (c) 2017 lijie
+The author has confirmed this contribution to the ASF under Apache-2.0 and
+authorized relocating the source copyright notice here. The legacy personal
+contact and creation-history comment has been removed from the source file.
