@@ -29,4 +29,3 @@ jobs:
       - run: dotnet restore DubboNet.sln
       - run: dotnet build DubboNet.sln --configuration Release --no-restore -p:GeneratePackageOnBuild=false
       - run: dotnet test Tests/UnitTestForDubboNet/UnitTestForDubboNet.csproj --configuration Release --no-build --no-restore -p:GeneratePackageOnBuild=false
-
