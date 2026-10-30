@@ -3,6 +3,9 @@
 ###############################################################################
 * text=auto
 
+# Keep C# checkouts consistent across platforms without rewriting source BOMs.
+*.cs text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #
