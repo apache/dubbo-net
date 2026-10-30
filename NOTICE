@@ -5,5 +5,7 @@ This product includes software developed at
 The Apache Software Foundation (http://www.apache.org/).
 
 This product includes software originally developed in the DubboNet project
-(https://github.com/lulianqi/DubboNet). The original copyright notices and
-attributions are preserved in the source files.
+(https://github.com/lulianqi/DubboNet).
+Copyright (c) 2023 lulianqi (mycllq@hotmail.com)
+The original MIT permission and disclaimer are preserved in
+LICENSES/DubboNet-MIT.txt. Original notices in source files are retained.

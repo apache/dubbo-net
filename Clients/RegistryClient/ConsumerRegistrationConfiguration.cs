@@ -26,6 +26,9 @@ namespace DubboNet.Clients.RegistryClient
 
         private static void OnProcessExit(object sender, EventArgs args)
         {
+            // Bounded best effort only: process termination may interrupt this
+            // cleanup. Registry session expiry / ephemeral-instance expiry is the
+            // final safety net, not a guarantee that this handler will complete.
             try { Manager.ShutdownAsync().Wait(Manager.ShutdownTimeout); }
             catch { /* Ephemeral registrations are ultimately cleaned up by the registry server. */ }
         }
