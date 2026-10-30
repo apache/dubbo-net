@@ -5,9 +5,9 @@
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Title>DubboNet</Title>
     <Authors>lulianqi</Authors>
-    <PackageProjectUrl>https://github.com/lulianqi/DubboNet</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/apache/dubbo-net</PackageProjectUrl>
     <PackageIcon>DubboNet.png</PackageIcon>
-    <RepositoryUrl>https://github.com/lulianqi/DubboNet</RepositoryUrl>
+    <RepositoryUrl>https://github.com/apache/dubbo-net</RepositoryUrl>
     <PackageTags>dubbo;triple;hessian2;zookeeper;nacos</PackageTags>
     <IncludeSymbols>False</IncludeSymbols>
     <PackageReadmeFile>README.md</PackageReadmeFile>

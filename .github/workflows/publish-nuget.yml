@@ -16,6 +16,9 @@ concurrency:
 jobs:
   publish:
     name: Test, pack and publish
+    # Keep the pre-ASF publishing identity scoped to the original repository.
+    # Apache release publishing must be configured and reviewed separately.
+    if: github.repository == 'lulianqi/DubboNet'
     runs-on: ubuntu-latest
     environment: release
 
