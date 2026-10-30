@@ -1,8 +1,7 @@
 # Triple 第一期实现说明
 
 `TripleDubboActuatorSuite` 面向 Dubbo 3.3+ 的 Java Interface Unary HTTP/JSON
-调用。注册中心返回 `tri://` Provider URL 时，`DubboServiceDriver` 会选择该执行器，
-不再把 Triple 节点交给普通 `HttpDubboActuatorSuite`。
+调用。注册中心返回 `tri://` Provider URL 时，`DubboServiceDriver` 会选择该专用执行器。
 
 ## 请求格式
 

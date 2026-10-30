@@ -39,6 +39,7 @@ public class HistoricalHelperCleanupTest
     [InlineData("MyCommonHelper.EncryptionHelper.MyXOR")]
     [InlineData("NetService.WebService.MyWebTool")]
     [InlineData("NetService.Telnet.EsTelnet")]
+    [InlineData("DubboNet.DubboService.HttpDubboActuatorSuite")]
     public void UnusedLegacyTypesAreNotShippedInTheLibrary(string name)
     {
         Assert.Null(typeof(DubboClient).Assembly.GetType(name));
