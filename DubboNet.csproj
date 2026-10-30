@@ -4,7 +4,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Title>DubboNet</Title>
-    <Authors>lulianqi</Authors>
+    <Authors>The Apache Software Foundation</Authors>
     <PackageProjectUrl>https://github.com/apache/dubbo-net</PackageProjectUrl>
     <PackageIcon>DubboNet.png</PackageIcon>
     <RepositoryUrl>https://github.com/apache/dubbo-net</RepositoryUrl>
@@ -45,6 +45,10 @@
 
   <ItemGroup>
     <None Update="LICENSE">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Update="NOTICE">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>

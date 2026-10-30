@@ -839,23 +839,19 @@ IP、端口和协议时如何绕过注册中心直接调用：
 dotnet run --project Tests/QueryDemo/QueryDemo.csproj
 ```
 
-### 自动发布 NuGet 包 / Automated NuGet publishing
+### 发布 / Publishing
 
-仓库通过 `.github/workflows/publish-nuget.yml` 自动发布正式版本。创建并发布 GitHub
-Release 后，工作流会把 Release Tag（支持 `3.6.2` 或 `v3.6.2`）作为包版本，依次运行
-单元测试、打包，并将同一个 `.nupkg` 发布到 GitHub Packages 和 nuget.org。
+The pre-ASF automated publishing job inherited from the original repository has
+been removed. Release publishing for the Apache project must be set up and
+reviewed separately under ASF release policy (PMC-managed release process,
+signed artifacts, ASF-owned publishing identity). No package is published from
+this repository today.
 
-nuget.org 使用 Trusted Publishing/OIDC 颁发的临时密钥，不在仓库中保存长期 API Key。
-首次启用时，需要在 nuget.org 为包所有者创建以下 Trusted Publishing Policy：
-
-- Repository Owner：`lulianqi`
-- Repository：`DubboNet`
-- Workflow File：`publish-nuget.yml`
-- Environment：`release`
-
-GitHub Packages 使用工作流自带的 `GITHUB_TOKEN`；首次发布后可在 Package settings 中
-确认包的可见性。包通过项目中的 `RepositoryUrl` 自动关联到本仓库。
+本仓库目前不包含任何自动发布工作流。Apache 发布流程需单独设计并评审，
+不得沿用原个人项目的 nuget.org / GitHub Packages 发布身份。
 
 ## License
 
-本项目使用 [MIT License](LICENSE)。
+本项目使用 [Apache License 2.0](LICENSE)。
+
+This project is licensed under the [Apache License 2.0](LICENSE).
