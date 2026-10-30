@@ -1,7 +1,0 @@
-
-services:
-  dubboclientintegrationtests:
-    image: dubboclientintegrationtests
-    build:
-      context: .
-      dockerfile: Tests/DubboClientIntegrationTests/Dockerfile

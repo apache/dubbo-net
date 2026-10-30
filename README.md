@@ -2,7 +2,7 @@
 
 DubboNet 是一个面向 .NET 的 Dubbo 客户端库。它可以从 ZooKeeper 或 Nacos 发现 Provider，依据 Provider URL 选择传输执行器，并通过经典 Dubbo TCP/Hessian2 或 Dubbo 3 Triple HTTP/JSON 调用 Java 接口，因此调用方不需要引用 Java 接口 JAR。
 
-> 当前项目目标框架为 **.NET 6**，可被 .NET 6 及以上版本的应用引用。原生 Dubbo TCP 调用已在 **Dubbo 2.7.3** Provider 上完成真实环境验证；Triple 第一期已在 **Dubbo 3.3.6** Java Interface Provider 上完成真实环境验证。其他版本的支持边界请先阅读[版本兼容性 / Compatibility](#版本兼容性--compatibility)。
+> 当前 Apache 导入分支目标框架为 **.NET 10**，库、示例和测试均使用 `net10.0`。本次变更不会替换此前发布的个人项目 NuGet 包。原生 Dubbo TCP 调用已在 **Dubbo 2.7.3** Provider 上完成真实环境验证；Triple 第一期已在 **Dubbo 3.3.6** Java Interface Provider 上完成真实环境验证。其他版本的支持边界请先阅读[版本兼容性 / Compatibility](#版本兼容性--compatibility)。
 
 ## 功能概览 / Features
 
@@ -60,7 +60,7 @@ dotnet add package DubboNet --version 3.6.2
 </ItemGroup>
 ```
 
-编译需要 .NET 6 SDK 或更新版本；示例和测试默认运行在 .NET 6 Runtime 上。NuGet 类库可由 .NET 6 及以上版本的应用引用，并使用调用方的运行时。项目的主要依赖是 `DistributedLock.ZooKeeper`、`nacos-sdk-csharp` 和 `NHessian`。
+当前源码编译需要 .NET 10 SDK，示例和测试使用 .NET 10 Runtime。当前分支生成的类库仅提供 `net10.0` 目标，不能再被 .NET 6/7/8/9 应用直接引用；旧版本应用需要升级或继续使用此前兼容的已发布包。项目的主要依赖是 `DistributedLock.ZooKeeper`、`nacos-sdk-csharp` 和 `NHessian`。
 
 ## 快速开始 / Quick Start
 
@@ -661,8 +661,8 @@ else
 
 | 组件或版本 | 支持状态 | 说明 |
 | --- | --- | --- |
-| .NET 6 | **支持** | 当前库、示例和测试项目均目标化 `net6.0`；可使用 .NET 6 SDK 构建 |
-| .NET 7/8/9/10 | **兼容引用** | 应用可引用包内的 `net6.0` 类库，并使用自身运行时；无需额外安装 .NET 6 Runtime |
+| .NET 10 | **当前目标** | 库、示例和测试均目标化 `net10.0`，CI 使用 .NET 10 SDK |
+| .NET 6/7/8/9 | **当前分支不支持引用** | 本分支不再提供较低版本 TFM；此前个人项目已发布包不会因本次修改被替换 |
 | .NET Framework / .NET Standard | **当前包不支持** | 未提供 `netstandard2.0`、`netstandard2.1` 或 .NET Framework 目标 |
 | ZooKeeper 经典接口级注册 | **支持** | 读取 `/dubbo/{interface}/providers` 并注册 watch |
 | Nacos 2.5.4 接口级注册 | **真实验证** | 使用 Naming 服务发现/订阅 Provider，并从 Config 读取/监听远程元数据；已验证 Dubbo 3.2.20、3.3.6 |
@@ -799,7 +799,7 @@ Dubbo 3.3.6 的默认 Triple HTTP/JSON 映射不能可靠区分全部 Java 重�
 
 ## 构建与测试 / Build and Test
 
-需要 .NET 6 SDK 或更新版本。运行 `net6.0` 示例和测试时还需安装 .NET 6 Runtime；仅引用类库的高版本应用不需要安装它：
+需要 .NET 10 SDK。所有项目均使用 `net10.0`，不再需要安装 .NET 6 Runtime：
 
 ```bash
 dotnet restore DubboNet.sln
@@ -807,25 +807,31 @@ dotnet build DubboNet.sln --no-restore
 dotnet test Tests/UnitTestForDubboNet/UnitTestForDubboNet.csproj --no-restore
 ```
 
-`DubboClientIntegrationTests` 默认连接公开 ZooKeeper 测试注册中心 `110.40.136.183:2181`，也可以把其他注册中心地址作为第一个参数传入：
+`DubboClientIntegrationTests` 和 `QueryDemo` 默认只使用本机：ZooKeeper 为 `localhost:2181`，Nacos 为 `nacos://localhost:8848`，直连 Provider 的主机为 `localhost`。远程主机必须在运行时通过命令行或环境变量传入，没有内置公网测试地址。
+
+使用 `--host` 同时指定注册中心和直连 Provider 的主机：
 
 ```bash
 dotnet run \
   --project Tests/DubboClientIntegrationTests/DubboClientIntegrationTests.csproj \
-  -- 110.40.136.183:2181
+  -- --host localhost
 ```
 
-Nacos 测试环境可直接使用简写 `nacos`，或传入完整地址：
+Nacos 可使用 `--nacos` 或兼容的 `nacos` 简写。注册中心与 Provider 不在同一主机时，分别指定地址：
 
 ```bash
 dotnet run \
   --project Tests/DubboClientIntegrationTests/DubboClientIntegrationTests.csproj \
-  -- nacos
+  -- --nacos --host localhost
 
 dotnet run \
   --project Tests/DubboClientIntegrationTests/DubboClientIntegrationTests.csproj \
-  -- nacos://110.40.136.183:8848
+  -- --registry nacos://localhost:8848 --provider-host localhost
 ```
+
+也支持环境变量 `DUBBONET_TEST_HOST`、`DUBBONET_TEST_REGISTRY`、`DUBBONET_TEST_PROVIDER_HOST`。命令行 `--host` 覆盖环境变量中的地址，`--registry` / `--provider-host` 可分别指定两端；未指定独立 Provider 主机时，默认使用显式主机或注册中心的首个主机。旧的第一个位置参数（例如 `localhost:2181` 或 `nacos://localhost:8848`）仍然可用。
+
+传入 `--print-config` 只打印生效配置，不解析 DNS、不连接注册中心、不发送 RPC；`--help` 显示参数说明。普通单元测试不使用这些联网集成参数，也不依赖公网服务。
 
 ZooKeeper 测试矩阵覆盖 Dubbo 2.7.23、3.1.11、3.2.20 和 3.3.6；Nacos 测试矩阵覆盖 3.2.20 和 3.3.6。两者均验证元数据缓存、
 自动签名推断、显式 Java 类型、强类型返回、`DubboInvocation`、Provider 异常，
@@ -836,8 +842,17 @@ ZooKeeper 测试矩阵覆盖 Dubbo 2.7.23、3.1.11、3.2.20 和 3.3.6；Nacos �
 IP、端口和协议时如何绕过注册中心直接调用：
 
 ```bash
-dotnet run --project Tests/QueryDemo/QueryDemo.csproj
+dotnet run --project Tests/QueryDemo/QueryDemo.csproj -- --host localhost
 ```
+
+仓库不再提供个人 VS Code 快捷任务和根目录 Compose 调试文件。命令行构建、测试、运行不受影响；独立容器构建入口仍保留：
+
+```bash
+docker build -f Tests/DubboClientIntegrationTests/Dockerfile -t dubbonet-integration .
+docker run --rm dubbonet-integration --host localhost --print-config
+```
+
+容器内 `localhost` 指容器自身。连接宿主机或外部 Provider 时，应显式传入容器可达的主机名或 IP。
 
 ### 发布 / Publishing
 

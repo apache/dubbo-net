@@ -20,21 +20,43 @@ using DubboNet.Clients.DataModle;
 using DubboNet.Clients.RegistryClient;
 using DubboNet.DubboService;
 using DubboNet.DubboService.DataModle;
+using DubboNet.Testing;
+using System.Net;
 using System.Text.Json;
 
-const string DefaultZooKeeper = "110.40.136.183:2181";
-const string DefaultNacos = "nacos://110.40.136.183:8848";
-const string ProviderHost = "110.40.136.183";
 const string DataTypeService = "com.example.dubbonet.api.DataTypeService";
 const string EchoService = "com.example.dubbonet.api.EchoService";
 const string OrderService = "com.example.dubbonet.api.OrderService";
 const string UserService = "com.example.dubbonet.api.UserService";
 
-string registryAddress = args.Length > 0
-    ? (string.Equals(args[0], "nacos", StringComparison.OrdinalIgnoreCase)
-        ? DefaultNacos
-        : args[0])
-    : DefaultZooKeeper;
+TestEndpointOptions options;
+try { options = TestEndpointOptions.Parse(args); }
+catch (ArgumentException exception)
+{
+    Console.Error.WriteLine(exception.Message);
+    Console.Error.WriteLine(TestEndpointOptions.Usage);
+    Environment.ExitCode = 2;
+    return;
+}
+if (options.ShowHelp)
+{
+    Console.WriteLine(TestEndpointOptions.Usage);
+    return;
+}
+if (options.PrintConfiguration)
+{
+    Console.WriteLine(JsonSerializer.Serialize(options));
+    return;
+}
+string registryAddress = options.RegistryAddress;
+IPAddress[] providerAddresses;
+try { providerAddresses = await options.ResolveProviderAddressesAsync(); }
+catch (Exception exception) when (exception is ArgumentException or System.Net.Sockets.SocketException)
+{
+    Console.Error.WriteLine($"Provider host resolution failed: {exception.Message}");
+    Environment.ExitCode = 2;
+    return;
+}
 bool useNacos = registryAddress.StartsWith("nacos://", StringComparison.OrdinalIgnoreCase);
 VersionScenario[] versions = useNacos
     ? new[]
@@ -52,12 +74,13 @@ VersionScenario[] versions = useNacos
 
 TestSummary summary = new();
 Console.WriteLine($"Registry: {registryAddress} ({(useNacos ? "Nacos" : "ZooKeeper")})");
+Console.WriteLine($"Provider host: {options.ProviderHost} ({providerAddresses[0]})");
 Console.WriteLine("Dubbo versions: " + string.Join(", ", versions.Select(version => version.Version)));
 Console.WriteLine();
 
 if (useNacos)
 {
-    await RunNacosDirectoryCasesAsync(registryAddress, summary);
+    await RunNacosDirectoryCasesAsync(registryAddress, providerAddresses, summary);
 }
 
 foreach (VersionScenario version in versions)
@@ -65,7 +88,7 @@ foreach (VersionScenario version in versions)
     await RunVersionAsync(version, registryAddress, summary);
 }
 
-await RunDirectProtocolCasesAsync(summary);
+await RunDirectProtocolCasesAsync(providerAddresses[0], summary);
 
 Console.WriteLine();
 Console.WriteLine(
@@ -82,7 +105,7 @@ if (summary.Failed > 0)
     Environment.ExitCode = 1;
 }
 
-static async Task RunNacosDirectoryCasesAsync(string registryAddress, TestSummary summary)
+static async Task RunNacosDirectoryCasesAsync(string registryAddress, IPAddress[] providerAddresses, TestSummary summary)
 {
     Console.WriteLine("=== Nacos public directory API ===");
     try
@@ -102,7 +125,7 @@ static async Task RunNacosDirectoryCasesAsync(string registryAddress, TestSummar
             EchoService,
             "dubbo-3.3.6");
         Record("Nacos", "directory/providers",
-            providers.Any(provider => provider.EndPoint?.Address.ToString() == ProviderHost),
+            providers.Any(provider => provider.EndPoint != null && providerAddresses.Contains(provider.EndPoint.Address)),
             string.Join(", ", providers.Select(provider => $"{provider.Scheme}://{provider.EndPoint}")),
             summary);
 
@@ -112,7 +135,7 @@ static async Task RunNacosDirectoryCasesAsync(string registryAddress, TestSummar
             rawService,
             "dubbo-3.3.6");
         Record("Nacos", "directory/raw-instances",
-            instances.Any(instance => instance.Ip == ProviderHost
+            instances.Any(instance => providerAddresses.Any(address => address.ToString() == instance.Ip)
                 && instance.Metadata.ContainsKey("protocol")),
             $"{instances.Count} instances", summary);
     }
@@ -311,7 +334,7 @@ static async Task RunMetadataCaseAsync(
     }
 }
 
-static async Task RunDirectProtocolCasesAsync(TestSummary summary)
+static async Task RunDirectProtocolCasesAsync(IPAddress providerAddress, TestSummary summary)
 {
     Console.WriteLine("=== Dubbo 3.3.6 direct protocol selection ===");
     DubboInvocation invocation = new(
@@ -328,7 +351,7 @@ static async Task RunDirectProtocolCasesAsync(TestSummary summary)
         DubboRequestTimeout = 10_000
     };
 
-    using (NativeDubboActuatorSuite native = new(ProviderHost, 20880, configuration))
+    using (NativeDubboActuatorSuite native = new(new IPEndPoint(providerAddress, 20880), configuration))
     {
         await RunCaseAsync(
             "3.3.6",
@@ -341,7 +364,7 @@ static async Task RunDirectProtocolCasesAsync(TestSummary summary)
             summary);
     }
 
-    using (TripleDubboActuatorSuite triple = new(ProviderHost, 50051, configuration))
+    using (TripleDubboActuatorSuite triple = new(new IPEndPoint(providerAddress, 50051), configuration))
     {
         await RunCaseAsync(
             "3.3.6",

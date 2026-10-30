@@ -13,24 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM mcr.microsoft.com/dotnet/runtime:6.0 AS base
+FROM mcr.microsoft.com/dotnet/runtime:10.0 AS base
 WORKDIR /app
 
-RUN groupadd --gid 1654 app && useradd --uid 1654 --gid app --create-home app
-USER app
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:6.0 AS build
+# Official .NET 10 images already provide the non-root app user.
+USER $APP_UID
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG configuration=Release
 WORKDIR /src
 COPY ["DubboNet.csproj", "."]
 COPY ["Tests/DubboClientIntegrationTests/DubboClientIntegrationTests.csproj", "Tests/DubboClientIntegrationTests/"]
+COPY ["Tests/Shared/TestEndpointOptions.cs", "Tests/Shared/"]
 RUN dotnet restore "Tests/DubboClientIntegrationTests/DubboClientIntegrationTests.csproj"
 COPY . .
 WORKDIR "/src/Tests/DubboClientIntegrationTests"
-RUN dotnet build "DubboClientIntegrationTests.csproj" -c $configuration -o /app/build
+RUN dotnet build "DubboClientIntegrationTests.csproj" -c $configuration -o /app/build -p:GeneratePackageOnBuild=false
 
 FROM build AS publish
 ARG configuration=Release
-RUN dotnet publish "DubboClientIntegrationTests.csproj" -c $configuration -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "DubboClientIntegrationTests.csproj" -c $configuration -o /app/publish /p:UseAppHost=false -p:GeneratePackageOnBuild=false
 
 FROM base AS final
 WORKDIR /app

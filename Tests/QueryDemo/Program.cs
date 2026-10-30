@@ -19,16 +19,44 @@ using DubboNet.Clients;
 using DubboNet.Clients.DataModle;
 using DubboNet.DubboService;
 using DubboNet.DubboService.DataModle;
+using DubboNet.Testing;
+using System.Text.Json;
 
-const string DefaultZooKeeper = "110.40.136.183:2181";
 const string DubboRootPath = "/dubbo-3.3.6";
-const string ProviderHost = "110.40.136.183";
 const string EchoService = "com.example.dubbonet.api.EchoService";
 const string DataTypeService = "com.example.dubbonet.api.DataTypeService";
 
-string zooKeeper = args.Length > 0 ? args[0] : DefaultZooKeeper;
+TestEndpointOptions options;
+try { options = TestEndpointOptions.Parse(args); }
+catch (ArgumentException exception)
+{
+    Console.Error.WriteLine(exception.Message);
+    Console.Error.WriteLine(TestEndpointOptions.Usage);
+    Environment.ExitCode = 2;
+    return;
+}
+if (options.ShowHelp)
+{
+    Console.WriteLine(TestEndpointOptions.Usage);
+    return;
+}
+if (options.PrintConfiguration)
+{
+    Console.WriteLine(JsonSerializer.Serialize(options));
+    return;
+}
+string registryAddress = options.RegistryAddress;
+string providerAddress;
+try { providerAddress = (await options.ResolveProviderAddressesAsync())[0].ToString(); }
+catch (Exception exception) when (exception is ArgumentException or System.Net.Sockets.SocketException)
+{
+    Console.Error.WriteLine($"Provider host resolution failed: {exception.Message}");
+    Environment.ExitCode = 2;
+    return;
+}
 
-Console.WriteLine($"ZooKeeper: {zooKeeper}");
+Console.WriteLine($"Registry: {registryAddress}");
+Console.WriteLine($"Provider host: {options.ProviderHost} ({providerAddress})");
 Console.WriteLine($"Dubbo root: {DubboRootPath}");
 Console.WriteLine();
 
@@ -36,9 +64,11 @@ Console.WriteLine();
 // 服务发现结果和方法元数据缓存。应用关闭时再 Dispose。
 // EN: Reuse DubboClient as a long-lived object so registry/provider connections,
 // discovery results, and metadata caches can be shared. Dispose it at shutdown.
-using DubboClient client = new(zooKeeper, new DubboClient.DubboClientConf
+using DubboClient client = new(registryAddress, new DubboClient.DubboClientConf
 {
     DubboRootPath = DubboRootPath,
+    // Prepared ZooKeeper/Nacos fixtures store metadata in the same version group.
+    MetadataRootPath = DubboRootPath,
     DubboRequestTimeout = 10_000
 });
 
@@ -183,7 +213,7 @@ DubboInvocation directInvocation = new(
 // 参数依次是 Provider IP、Dubbo TCP 端口和可选执行器配置。
 // EN: Create NativeDubboActuatorSuite for a known dubbo:// provider IP and TCP port.
 using NativeDubboActuatorSuite nativeSuite = new(
-    ProviderHost,
+    providerAddress,
     20880,
     new DubboActuatorSuiteConf { DubboRequestTimeout = 10_000 });
 DubboRequestResult directNativeResult = await nativeSuite.SendQuery(directInvocation);
@@ -193,7 +223,7 @@ Console.WriteLine($"直连 Dubbo TCP: {directNativeResult.Result}");
 // 参数依次是 Provider IP、Triple 端口和可选执行器配置。
 // EN: Create TripleDubboActuatorSuite for a known tri:// Java-interface provider IP and port.
 using TripleDubboActuatorSuite tripleSuite = new(
-    ProviderHost,
+    providerAddress,
     50051,
     new DubboActuatorSuiteConf { DubboRequestTimeout = 10_000 });
 DubboRequestResult directTripleResult = await tripleSuite.SendQuery(directInvocation);

@@ -24,8 +24,11 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          # Compatibility baseline only; supported-LTS migration is tracked in #5.
-          dotnet-version: '6.0.x'
+          dotnet-version: '10.0.x'
       - run: dotnet restore DubboNet.sln
       - run: dotnet build DubboNet.sln --configuration Release --no-restore -p:GeneratePackageOnBuild=false
       - run: dotnet test Tests/UnitTestForDubboNet/UnitTestForDubboNet.csproj --configuration Release --no-build --no-restore -p:GeneratePackageOnBuild=false
+      - name: Build the portable integration-test container
+        run: docker build -f Tests/DubboClientIntegrationTests/Dockerfile -t dubbonet-integration:ci .
+      - name: Check container defaults without network access
+        run: docker run --rm --network none dubbonet-integration:ci --print-config
