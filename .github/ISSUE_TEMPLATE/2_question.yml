@@ -1,0 +1,17 @@
+name: Question or discussion
+description: Ask a question or start a discussion about dubbo-net
+title: "[Question]: "
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What would you like to ask or discuss?
+      description: Include the behavior, API, or topic you would like to discuss.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context (optional)
+      description: Share a small code sample, configuration, or related link if useful.
