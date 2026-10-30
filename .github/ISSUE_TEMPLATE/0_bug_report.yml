@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a problem in dubbo-net
+title: "[Bug]: "
+labels: ["☢️ Bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the expected result, actual result, and any error message.
+      placeholder: |
+        Expected: ...
+        Actual: ...
+        Error: ...
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it? (optional)
+      description: A minimal code sample or repository link is especially helpful.
+      placeholder: |
+        1. ...
+        2. ...
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the dubbo-net version, .NET version, operating system, and relevant configuration.
+    validations:
+      required: false

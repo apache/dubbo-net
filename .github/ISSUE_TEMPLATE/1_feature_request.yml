@@ -1,0 +1,18 @@
+name: Feature request
+description: Suggest an improvement for dubbo-net
+title: "[Feature]: "
+labels: ["✏️ Feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Tell us about the use case and the improvement you would like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution (optional)
+      description: Share an API sketch, implementation idea, or alternatives if you have them.

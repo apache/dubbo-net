@@ -361,3 +361,23 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# ---------------------------------------------------------------------------
+# Entries kept from the initial Apache repository scaffolding.
+# Binary artifacts must never be committed; the template above only ignores
+# build output directories.
+# ---------------------------------------------------------------------------
+*.dll
+*.dylib
+*.exe
+*.exe~
+*.mdb
+*.so
+*.sln.iml
+*.trx
+.*.sw?
+.DS_Store
+.history
+.idea/
+.msbuild/
+/.tools/
