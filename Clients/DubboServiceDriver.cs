@@ -244,6 +244,9 @@ namespace DubboNet.Clients
                     && (!protocol.HasValue || item.InnerDubboActuatorSuite.ProtocolType == protocol)
                     && (version == null || string.Equals(item.Version, version, StringComparison.Ordinal))
                     && (group == null || string.Equals(item.Group, group, StringComparison.Ordinal))));
+                // Bound caller-controlled (protocol, version, group) combinations.
+                // 1024 is a defensive cache cap, not a provider limit. A full clear
+                // is cheap: CandidateSet is rebuilt from _endpoints on the next miss.
                 if (_candidates.Count >= 1024) _candidates.Clear();
                 _candidates.Add(key, set);
             }

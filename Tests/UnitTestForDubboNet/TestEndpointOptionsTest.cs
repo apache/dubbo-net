@@ -102,7 +102,23 @@ public class TestEndpointOptionsTest
         TestEndpointOptions overridden = TestEndpointOptions.Parse(new[] { "--host", "localhost" }, Read);
         Assert.Equal("localhost:2181", overridden.RegistryAddress);
         Assert.Equal("localhost", overridden.ProviderHost);
-        Assert.Equal("nacos://host.example.test:8848", TestEndpointOptions.Parse(new[] { "--nacos" }, Read).RegistryAddress);
+        Assert.Throws<ArgumentException>(() => TestEndpointOptions.Parse(new[] { "--nacos" }, Read));
+        Assert.Equal("nacos://localhost:8848", TestEndpointOptions.Parse(new[] { "--nacos", "--host", "localhost" }, Read).RegistryAddress);
+    }
+
+    [Theory]
+    [InlineData("nacos")]
+    [InlineData("--nacos")]
+    public void NacosShortcutHonorsTheExplicitEnvironmentRegistry(string shortcut)
+    {
+        string? Read(string key) => key == "DUBBONET_TEST_REGISTRY" ? "nacos://registry.example.test:18848" : null;
+        TestEndpointOptions options = TestEndpointOptions.Parse(new[] { shortcut }, Read);
+        Assert.Equal("nacos://registry.example.test:18848", options.RegistryAddress);
+        Assert.Equal("registry.example.test", options.ProviderHost);
+        Assert.Equal("nacos://cli.example.test:28848", TestEndpointOptions.Parse(new[]
+        {
+            shortcut, "--registry", "nacos://cli.example.test:28848"
+        }, Read).RegistryAddress);
     }
 
     [Fact]

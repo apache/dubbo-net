@@ -2,7 +2,7 @@ name: Build and test
 
 on:
   push:
-    branches: [main, codex/import-dubbonet-history]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:

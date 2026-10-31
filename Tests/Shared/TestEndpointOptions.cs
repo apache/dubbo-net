@@ -32,7 +32,7 @@ internal sealed record TestEndpointOptions(
           --host HOST           Registry/provider host (default: localhost).
           --registry ADDRESS    ZooKeeper address or nacos:// address.
           --provider-host HOST  Override the direct provider host independently.
-          --nacos               Use Nacos instead of ZooKeeper.
+          --nacos               Use Nacos; honor an explicit Nacos registry address.
           --print-config        Print resolved configuration without network I/O.
           --help                Show this help without running requests.
         The first positional argument remains a registry address or 'nacos'.
@@ -59,6 +59,11 @@ internal sealed record TestEndpointOptions(
                 case "--print-config": print = true; break;
                 case "--help": case "-h": help = true; break;
                 default:
+                    if (argument.Equals("nacos", StringComparison.OrdinalIgnoreCase))
+                    {
+                        nacos = true;
+                        break;
+                    }
                     if (argument.StartsWith('-') || registry != null)
                         throw new ArgumentException($"Unexpected argument: {argument}");
                     registry = argument;
@@ -76,7 +81,10 @@ internal sealed record TestEndpointOptions(
 
         string? environmentHost = Read("DUBBONET_TEST_HOST");
         string effectiveHost = Host(host ?? environmentHost ?? "localhost");
-        registry ??= host != null || nacos ? null : Read("DUBBONET_TEST_REGISTRY");
+        // An explicit --host still overrides environment addresses. --nacos only
+        // selects a protocol/default; it must not silently retarget an explicit
+        // environment registry (a conflicting ZooKeeper address is rejected below).
+        registry ??= host != null ? null : Read("DUBBONET_TEST_REGISTRY");
         registry = registry?.Trim();
         string registryHost;
         if (string.IsNullOrEmpty(registry) || registry.Equals("nacos", StringComparison.OrdinalIgnoreCase))

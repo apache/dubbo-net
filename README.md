@@ -675,6 +675,7 @@ else
 | Dubbo 3.3.6 + `tri://` + Java Interface Unary JSON | **真实验证（第一期）** | 支持 HTTP/1.1、`application/json`、version/group/timeout 头和 attachments |
 | Triple Protobuf/IDL、流式调用、gRPC framing | **未实现** | 第一期仅覆盖 Java Interface Unary HTTP/JSON，不宣称完整 Triple/gRPC 能力 |
 | Dubbo Telnet/QoS | **可选** | 仅在 Provider 地址和端口开放相关命令时用于元数据兜底和诊断 |
+| 显式 version/group 路由 | **严格匹配（兼容性变化）** | 非空 `Version` / `Group` 按大小写精确匹配 Provider 身份，不再回退到其他版本/分组；未指定的字段不加约束。没有匹配节点时返回无可用 Provider |
 
 ## 协议与序列化限制 / Protocol and Serialization Limits
 
@@ -690,6 +691,8 @@ else
 - Telnet 输出中的源码式泛型参数会先做 Java 类型擦除，例如 `java.util.Map<String, Long>` 会转换成 `java.util.Map`。
 - 单个原生 TCP 连接按 Request ID 多路复用并发请求；写入串行，响应可以乱序返回。
 - 单个收到的 response body 默认上限为 8 MiB，当前没有 `DubboClientConf` 配置项修改该限制。
+- Hessian2 响应的 wire 嵌套和转换为 JSON 时的引用展开深度分别限制为 64 层；浅层 wire 数据也可能因共享引用形成深链而被拒绝。错误信息会区分 wire nesting 与 reference expansion。分块字符串/二进制使用迭代拼接，块数不计作嵌套深度。
+- 为防止小响应通过共享引用放大内存，返回值/异常与 attachments 共用 100,000 个展开节点（容器与值）及 32 MiB 保守 JSON 体积预算；重复引用每次展开均计费，字符串按 UTF-16 字符最坏转义长度估算，因此可能在实际 JSON 达到 32 MiB 前拒绝。超限返回可捕获的协议错误，不把合法共享引用替换为占位符。这些安全上限当前不可配置；超大或深链响应请在服务端分页/简化。
 - 支持应答 Provider 发来的双向 event/heartbeat 帧。
 - 不提供 TLS 传输或 Dubbo 自定义序列化扩展。
 - 请求写入失败后不会自动重放，以避免 Provider 已执行但客户端误判失败时产生重复业务操作；后续请求会重新建连。
@@ -698,6 +701,10 @@ else
 更详细的帧头、请求体字段和响应结果 flag 请阅读 [Docs/NativeDubboProtocol.md](Docs/NativeDubboProtocol.md)。
 
 Triple 第一期的请求格式、路由头和明确边界请阅读 [Docs/TripleProtocol.md](Docs/TripleProtocol.md)。
+
+Triple 每次请求使用一个覆盖响应头和完整响应体读取的截止时间。Provider URL 的 `timeout` 优先于客户端 `DubboRequestTimeout`（可更长或更短），未声明时使用客户端默认值；有效值最少为 1 ms。内部 `HttpClient.Timeout` 关闭，避免两个超时隐式竞争。
+
+直接使用 Native/Triple 执行器的 `SendQuery(invocation, cancellationToken)` 时，调用方取消仍按现有约定返回 `QuerySuccess == false` 的失败结果，而非让 Task 进入 Canceled 状态；不能依赖 `Task.WhenAll` 自动传播取消，需由上层检查结果/令牌并决定整批操作是否终止。Triple 的 `ErrorMeaasge` 明确区分 `canceled by caller` 与 `timed out after N ms`；取消与截止时间同时触发时优先标记调用方取消。参数错误和对已释放执行器的调用仍可直接抛异常。
 
 ## 使用建议 / Recommendations
 
@@ -830,6 +837,8 @@ dotnet run \
 ```
 
 也支持环境变量 `DUBBONET_TEST_HOST`、`DUBBONET_TEST_REGISTRY`、`DUBBONET_TEST_PROVIDER_HOST`。命令行 `--host` 覆盖环境变量中的地址，`--registry` / `--provider-host` 可分别指定两端；未指定独立 Provider 主机时，默认使用显式主机或注册中心的首个主机。旧的第一个位置参数（例如 `localhost:2181` 或 `nacos://localhost:8848`）仍然可用。
+
+`--nacos` 只选择协议及缺省端口，不会覆盖已设置的 `DUBBONET_TEST_REGISTRY`：环境变量为 Nacos 地址时使用该地址，为 ZooKeeper 地址时明确报配置冲突。需要覆盖环境地址时使用 `--host` 或显式 `--registry`，避免静默请求到另一套环境。
 
 传入 `--print-config` 只打印生效配置，不解析 DNS、不连接注册中心、不发送 RPC；`--help` 显示参数说明。普通单元测试不使用这些联网集成参数，也不依赖公网服务。
 

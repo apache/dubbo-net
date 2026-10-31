@@ -2,9 +2,10 @@ name: License header check
 
 # Checks source headers only; passing does not establish SGA/ICLA filing or IP
 # clearance. The project owner confirmed the contributed source authorship.
+# No bot comments are posted; inspect the Actions job log for failing file paths.
 on:
   push:
-    branches: [main, codex/import-dubbonet-history]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
