@@ -236,12 +236,14 @@ namespace DubboNet.DubboService
                 $"/{Uri.EscapeDataString(invocation.Method)}";
             string requestBody = JsonSerializer.Serialize(invocation.Arguments);
 
+            // One per-call deadline covers both headers and body. The owned
+            // HttpClient has no competing timeout; provider metadata overrides
+            // the configured default, including when the provider allows longer.
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(timeoutMilliseconds);
             try
             {
-                // ResponseHeadersRead ends HttpClient.Timeout at the headers. Keep a
-                // single deadline alive until the complete body has been consumed.
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeout.CancelAfter(timeoutMilliseconds);
+                cancellationToken.ThrowIfCancellationRequested();
                 using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, requestPath)
                 {
                     Version = HttpVersion.Version11,
@@ -279,7 +281,15 @@ namespace DubboNet.DubboService
                 stopwatch.Stop();
                 result.RequestElapsed = (int)stopwatch.ElapsedMilliseconds;
                 result.UpdateQueryFailed();
-                result.ErrorMeaasge = exception.Message;
+                // Preserve the failure-result contract shared with Native. Classify
+                // by the token sources, not elapsed wall time (which can race).
+                result.ErrorMeaasge = exception is OperationCanceledException
+                    ? cancellationToken.IsCancellationRequested
+                        ? "Triple request canceled by caller."
+                        : timeout.IsCancellationRequested
+                            ? $"Triple request timed out after {timeoutMilliseconds} ms."
+                            : exception.Message
+                    : exception.Message;
             }
 
             ActuatorSuiteStatusInfo.LastQueryElapsed = result.RequestElapsed;
@@ -386,6 +396,7 @@ namespace DubboNet.DubboService
 
             DubboActuatorSuiteConf effectiveConfiguration =
                 configuration ?? new DubboActuatorSuiteConf();
+            Uri baseAddress = new UriBuilder(Uri.UriSchemeHttp, address, port).Uri;
             int maxConnections = Math.Max(1, effectiveConfiguration.MaxConnections);
             SocketsHttpHandler handler = new SocketsHttpHandler
             {
@@ -397,10 +408,8 @@ namespace DubboNet.DubboService
 
             HttpClient client = new HttpClient(handler)
             {
-                BaseAddress = new Uri($"http://{address}:{port}"),
-                Timeout = TimeSpan.FromMilliseconds(Math.Max(
-                    1,
-                    effectiveConfiguration.DubboRequestTimeout))
+                BaseAddress = baseAddress,
+                Timeout = Timeout.InfiniteTimeSpan
             };
             return client;
         }

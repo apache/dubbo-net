@@ -143,7 +143,7 @@ public class ImportReviewRegressionTest
     {
         byte[] shallow = new byte[] { 0x91 }.Concat(Enumerable.Repeat((byte)0x79, DubboHessian2Reader.MaxNestingDepth - 1)).Append((byte)'N').ToArray();
         Assert.NotNull(Decode(shallow).Value);
-        Assert.Throws<InvalidDataException>(() => Decode(new byte[] { 0x91, 0x79 }.Concat(shallow.Skip(1)).ToArray()));
+        Assert.Contains("wire nesting", Assert.Throws<InvalidDataException>(() => Decode(new byte[] { 0x91, 0x79 }.Concat(shallow.Skip(1)).ToArray())).Message);
 
         // Sibling lists referencing their predecessor are shallow on the wire but
         // form a deep graph when expanded. Parsing depth alone cannot stop this.
@@ -153,7 +153,7 @@ public class ImportReviewRegressionTest
             payload.AddRange(new byte[] { 0x79, 0x51, (byte)'I', 0, 0, 0, (byte)i });
         }
         payload.Add((byte)'Z');
-        Assert.Throws<InvalidDataException>(() => Decode(payload.ToArray()));
+        Assert.Contains("reference expansion", Assert.Throws<InvalidDataException>(() => Decode(payload.ToArray())).Message);
     }
 
     [Theory]
@@ -173,6 +173,7 @@ public class ImportReviewRegressionTest
         Assert.Same(task, await Task.WhenAny(task, Task.Delay(5000)));
         var result = await task;
         Assert.False(result.QuerySuccess);
+        Assert.Equal(cancelCaller ? "Triple request canceled by caller." : "Triple request timed out after 150 ms.", result.ErrorMeaasge);
         Assert.InRange(result.RequestElapsed, 0, 4000);
         Assert.True(handler.Cancelled);
         if (!delayHeaders) Assert.True(handler.ContentDisposed);

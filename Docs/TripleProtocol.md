@@ -47,6 +47,13 @@ Dubbo 3.3.6 的默认 Triple HTTP/JSON 映射不能可靠区分所有 Java 重�
 Provider 返回的错误正文同时写入 `ErrorMeaasge`。响应头会保存在
 `ResponseAttachments` 中。
 
+## 截止时间、取消与地址
+
+- Provider URL 的 `timeout` 优先于 `DubboRequestTimeout` 默认值，可比默认值更长或更短；最少为 1 ms。
+- 每次调用的截止时间同时覆盖响应头和完整响应体。内部 `HttpClient.Timeout` 为无限，不与调用级截止时间竞争。
+- `SendQuery(invocation, cancellationToken)` 保持 Native/Triple 的失败结果约定：调用方取消不抛出取消异常，而是返回 `QuerySuccess=false`。Triple 错误信息区分 `canceled by caller` 和 `timed out after N ms`，两者同时发生时优先归为调用方取消。上层需要自行检查结果/令牌决定整批调用是否结束。
+- 地址/端口构造器支持域名、IPv4、有括号或无括号的 IPv6；`IPEndPoint` 构造器同样支持 IPv6。
+
 ## 第一期边界
 
 当前支持：
