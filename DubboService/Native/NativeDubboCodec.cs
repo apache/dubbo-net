@@ -37,6 +37,8 @@ namespace DubboNet.DubboService.Native
     {
         internal const int HeaderLength = 16;
         internal const int DefaultMaxPayloadLength = 8 * 1024 * 1024;
+        internal const int MaxNormalizedNodes = 100_000;
+        internal const long MaxNormalizedJsonBytes = 32L * 1024 * 1024;
         internal const byte Hessian2SerializationId = 2;
         internal const byte OkStatus = 20;
         internal const string ProtocolVersion = "2.0.2";
@@ -204,27 +206,29 @@ namespace DubboNet.DubboService.Native
                 return response;
             }
 
+            // Share the expansion allowance across the value/exception AND attachments.
+            NormalizationBudget budget = new NormalizationBudget();
             response.ResultKind = input.ReadInt();
             switch (response.ResultKind)
             {
                 case 0:
-                    response.Exception = ToJsonCompatible(input.ReadValue());
+                    response.Exception = ToJsonCompatible(input.ReadValue(), budget);
                     break;
                 case 1:
-                    response.Value = ToJsonCompatible(input.ReadValue());
+                    response.Value = ToJsonCompatible(input.ReadValue(), budget);
                     break;
                 case 2:
                     break;
                 case 3:
-                    response.Exception = ToJsonCompatible(input.ReadValue());
-                    response.Attachments = ReadAttachments(input);
+                    response.Exception = ToJsonCompatible(input.ReadValue(), budget);
+                    response.Attachments = ReadAttachments(input, budget);
                     break;
                 case 4:
-                    response.Value = ToJsonCompatible(input.ReadValue());
-                    response.Attachments = ReadAttachments(input);
+                    response.Value = ToJsonCompatible(input.ReadValue(), budget);
+                    response.Attachments = ReadAttachments(input, budget);
                     break;
                 case 5:
-                    response.Attachments = ReadAttachments(input);
+                    response.Attachments = ReadAttachments(input, budget);
                     break;
                 default:
                     throw new InvalidDataException(
@@ -343,9 +347,9 @@ namespace DubboNet.DubboService.Native
             return attachments;
         }
 
-        private static IReadOnlyDictionary<string, object> ReadAttachments(DubboHessian2Reader input)
+        private static IReadOnlyDictionary<string, object> ReadAttachments(DubboHessian2Reader input, NormalizationBudget budget)
         {
-            object value = ToJsonCompatible(input.ReadValue());
+            object value = ToJsonCompatible(input.ReadValue(), budget);
             return value as IReadOnlyDictionary<string, object>
                 ?? new Dictionary<string, object>();
         }
@@ -684,17 +688,53 @@ namespace DubboNet.DubboService.Native
             return (endPoint.Substring(0, separator), endPoint.Substring(separator + 1));
         }
 
-        private static object ToJsonCompatible(object value)
+        private sealed class NormalizationBudget
+        {
+            private int _nodes;
+            private long _jsonBytes;
+
+            internal void Visit(object value)
+            {
+                if (++_nodes > MaxNormalizedNodes)
+                    throw new InvalidDataException($"Hessian2 response expansion exceeds the limit of {MaxNormalizedNodes} nodes.");
+                // Charge every occurrence, not only each distinct object. Otherwise
+                // shared large strings/binaries bypass a node-only DAG defense.
+                ChargeBytes(value switch
+                {
+                    string text => StringBytes(text),
+                    byte[] bytes => 3L + 4L * ((bytes.LongLength + 2) / 3),
+                    IDictionary => 3L,
+                    IEnumerable => 3L,
+                    _ => 40L // Conservative allowance for scalars and separators.
+                });
+            }
+
+            internal void Property(string name) => ChargeBytes(StringBytes(name) + 2);
+            internal void Text(string text) => ChargeBytes(StringBytes(text));
+            // A UTF-16 code unit needs at most six bytes when JSON escaped.
+            private static long StringBytes(string text) => 3L + 6L * text.Length;
+
+            private void ChargeBytes(long count)
+            {
+                if (count > MaxNormalizedJsonBytes - _jsonBytes)
+                    throw new InvalidDataException($"Hessian2 response expansion exceeds the conservative JSON size budget of {MaxNormalizedJsonBytes} bytes.");
+                _jsonBytes += count;
+            }
+        }
+
+        private static object ToJsonCompatible(object value, NormalizationBudget budget = null)
         {
             return ToJsonCompatible(
                 value,
-                new HashSet<object>(ReferenceEqualityComparer.Instance));
+                new HashSet<object>(ReferenceEqualityComparer.Instance),
+                budget ?? new NormalizationBudget());
         }
 
-        private static object ToJsonCompatible(object value, HashSet<object> activeReferences, int depth = 0)
+        private static object ToJsonCompatible(object value, HashSet<object> activeReferences, NormalizationBudget budget, int depth = 0)
         {
             if (depth >= DubboHessian2Reader.MaxNestingDepth)
-                throw new InvalidDataException($"Hessian2 nesting exceeds the limit of {DubboHessian2Reader.MaxNestingDepth}.");
+                throw new InvalidDataException($"Hessian2 response nesting after reference expansion exceeds the limit of {DubboHessian2Reader.MaxNestingDepth} levels (including shared references).");
+            budget.Visit(value);
             if (value == null
                 || value is string
                 || value is bool
@@ -719,6 +759,7 @@ namespace DubboNet.DubboService.Native
             {
                 if (!activeReferences.Add(value))
                 {
+                    budget.Text("[Circular reference]");
                     return "[Circular reference]";
                 }
                 Dictionary<string, object> normalized = new Dictionary<string, object>(StringComparer.Ordinal);
@@ -726,8 +767,9 @@ namespace DubboNet.DubboService.Native
                 {
                     foreach (DictionaryEntry entry in dictionary)
                     {
-                        normalized[entry.Key?.ToString() ?? "null"] =
-                            ToJsonCompatible(entry.Value, activeReferences, depth + 1);
+                        string key = entry.Key?.ToString() ?? "null";
+                        budget.Property(key);
+                        normalized[key] = ToJsonCompatible(entry.Value, activeReferences, budget, depth + 1);
                     }
                 }
                 finally
@@ -741,6 +783,7 @@ namespace DubboNet.DubboService.Native
             {
                 if (!activeReferences.Add(value))
                 {
+                    budget.Text("[Circular reference]");
                     return "[Circular reference]";
                 }
                 List<object> normalized = new List<object>();
@@ -748,7 +791,7 @@ namespace DubboNet.DubboService.Native
                 {
                     foreach (object item in enumerable)
                     {
-                        normalized.Add(ToJsonCompatible(item, activeReferences, depth + 1));
+                        normalized.Add(ToJsonCompatible(item, activeReferences, budget, depth + 1));
                     }
                 }
                 finally
@@ -757,7 +800,9 @@ namespace DubboNet.DubboService.Native
                 }
                 return normalized;
             }
-            return value.ToString();
+            string text = value.ToString();
+            budget.Text(text);
+            return text;
         }
     }
 

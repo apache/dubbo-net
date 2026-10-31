@@ -29,7 +29,8 @@ namespace DubboNet.DubboService.Native
     /// </summary>
     internal sealed class DubboHessian2Reader
     {
-        // Also used when expanding references into JSON-compatible response values.
+        // Wire nesting and JSON reference-expansion depth are independently bounded
+        // by the same limit; chunk sequences are concatenation, not nesting.
         internal const int MaxNestingDepth = 64;
         private int _depth;
         private sealed class ClassDefinition
@@ -78,7 +79,7 @@ namespace DubboNet.DubboService.Native
         public object ReadValue()
         {
             if (_depth >= MaxNestingDepth)
-                throw new InvalidDataException($"Hessian2 nesting exceeds the limit of {MaxNestingDepth}.");
+                throw new InvalidDataException($"Hessian2 wire nesting exceeds the limit of {MaxNestingDepth} levels.");
             _depth++;
             try { return ReadValueCore(); }
             finally { _depth--; }
@@ -341,24 +342,22 @@ namespace DubboNet.DubboService.Native
 
         private string ReadString(byte tag)
         {
-            if (tag == (byte)'N') return null;
-            if (tag <= 0x1f) return ReadUtf8Chars(tag);
-            if (tag >= 0x30 && tag <= 0x33)
+            StringBuilder chunks = null;
+            while (tag == (byte)'R')
             {
-                return ReadUtf8Chars(((tag - 0x30) << 8) + ReadByte());
+                chunks ??= new StringBuilder();
+                chunks.Append(ReadUtf8Chars(ReadUInt16()));
+                tag = ReadByte();
             }
-            if (tag == (byte)'S')
-            {
-                return ReadUtf8Chars(ReadUInt16());
-            }
-            if (tag == (byte)'R')
-            {
-                StringBuilder builder = new StringBuilder();
-                builder.Append(ReadUtf8Chars(ReadUInt16()));
-                builder.Append(ReadString());
-                return builder.ToString();
-            }
-            throw new InvalidDataException($"Hessian2 tag 0x{tag:x2} is not a string.");
+
+            string last;
+            if (tag == (byte)'N') last = null;
+            else if (tag <= 0x1f) last = ReadUtf8Chars(tag);
+            else if (tag >= 0x30 && tag <= 0x33)
+                last = ReadUtf8Chars(((tag - 0x30) << 8) + ReadByte());
+            else if (tag == (byte)'S') last = ReadUtf8Chars(ReadUInt16());
+            else throw new InvalidDataException($"Hessian2 tag 0x{tag:x2} is not a string.");
+            return chunks == null ? last : chunks.Append(last).ToString();
         }
 
         private string ReadUtf8Chars(int charCount)
@@ -421,26 +420,41 @@ namespace DubboNet.DubboService.Native
 
         private byte[] ReadBinary(byte tag)
         {
+            if (tag == (byte)'A')
+            {
+                // Append directly from the bounded input buffer. No recursion or
+                // repeated full-prefix copies, even for many empty chunks.
+                using MemoryStream chunks = new MemoryStream();
+                do
+                {
+                    int length = ReadUInt16();
+                    EnsureAvailable(length);
+                    chunks.Write(_buffer, _position, length);
+                    _position += length;
+                    tag = ReadByte();
+                } while (tag == (byte)'A');
+                int finalLength = ReadFinalBinaryLength(tag);
+                EnsureAvailable(finalLength);
+                chunks.Write(_buffer, _position, finalLength);
+                _position += finalLength;
+                return chunks.ToArray();
+            }
+            return ReadBytes(ReadFinalBinaryLength(tag));
+        }
+
+        private int ReadFinalBinaryLength(byte tag)
+        {
             if (tag >= 0x20 && tag <= 0x2f)
             {
-                return ReadBytes(tag - 0x20);
+                return tag - 0x20;
             }
             if (tag >= 0x34 && tag <= 0x37)
             {
-                return ReadBytes(((tag - 0x34) << 8) + ReadByte());
+                return ((tag - 0x34) << 8) + ReadByte();
             }
             if (tag == (byte)'B')
             {
-                return ReadBytes(ReadUInt16());
-            }
-            if (tag == (byte)'A')
-            {
-                byte[] first = ReadBytes(ReadUInt16());
-                byte[] rest = ReadBinary(ReadByte());
-                byte[] combined = new byte[first.Length + rest.Length];
-                Buffer.BlockCopy(first, 0, combined, 0, first.Length);
-                Buffer.BlockCopy(rest, 0, combined, first.Length, rest.Length);
-                return combined;
+                return ReadUInt16();
             }
             throw new InvalidDataException($"Hessian2 tag 0x{tag:x2} is not binary data.");
         }
