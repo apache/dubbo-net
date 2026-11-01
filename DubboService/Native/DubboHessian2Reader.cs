@@ -134,6 +134,7 @@ namespace DubboNet.DubboService.Native
                 throw new InvalidDataException($"Invalid Hessian2 class field count {fieldCount}.");
             }
 
+            EnsurePlausibleCount(fieldCount, "class field count");
             string[] fields = new string[fieldCount];
             for (int i = 0; i < fields.Length; i++)
             {
@@ -235,6 +236,11 @@ namespace DubboNet.DubboService.Native
                 throw new InvalidDataException($"Invalid Hessian2 list length {length}.");
             }
 
+            if (length >= 0)
+            {
+                EnsurePlausibleCount(length, "list length");
+            }
+
             List<object> list = length > 0 ? new List<object>(length) : new List<object>();
             _references.Add(list);
             if (hasEnd)
@@ -253,6 +259,18 @@ namespace DubboNet.DubboService.Native
                 }
             }
             return list;
+        }
+
+        private void EnsurePlausibleCount(int count, string kind)
+        {
+            // Every declared value or field name needs at least one wire byte.
+            // Reject impossible counts before allocating based on untrusted input.
+            int remaining = _buffer.Length - _position;
+            if (count > remaining)
+            {
+                throw new InvalidDataException(
+                    $"Hessian2 {kind} {count} exceeds the {remaining} remaining payload bytes.");
+            }
         }
 
         private string ReadType()

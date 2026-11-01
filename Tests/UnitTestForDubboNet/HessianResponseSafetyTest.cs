@@ -89,6 +89,46 @@ public class HessianResponseSafetyTest
         Assert.True(error is InvalidDataException or EndOfStreamException, error?.ToString() ?? "Expected rejection.");
     }
 
+    [Theory]
+    [InlineData("58497FFFFFFF", "list length")]
+    [InlineData("4300497FFFFFFF", "class field count")]
+    [InlineData("58924E", "list length")]
+    [InlineData("43009200", "class field count")]
+    public void DeclaredCountsExceedingRemainingBytesAreRejectedBeforeAllocation(
+        string hex, string kind)
+    {
+        var reader = new DubboHessian2Reader(Convert.FromHexString(hex));
+        var error = Assert.Throws<InvalidDataException>(() => reader.ReadValue());
+        Assert.Contains(kind, error.Message);
+        Assert.Contains("remaining payload bytes", error.Message);
+    }
+
+    [Theory]
+    [InlineData("58497FFFFFFF")]
+    [InlineData("4300497FFFFFFF")]
+    public void DubboResponseRejectsOversizedDeclaredCountsDuringParsing(string hex)
+    {
+        byte[] body = new byte[] { 0x91 }.Concat(Convert.FromHexString(hex)).ToArray();
+        Assert.Throws<InvalidDataException>(() => Decode(body));
+    }
+
+    [Fact]
+    public void FixedLengthListCanUseExactlyTheRemainingPayloadBytes()
+    {
+        var reader = new DubboHessian2Reader(Convert.FromHexString("58924E4E"));
+        var list = Assert.IsType<List<object>>(reader.ReadValue());
+        Assert.Equal(2, list.Count);
+        Assert.All(list, value => Assert.Null(value));
+    }
+
+    [Fact]
+    public void ClassDefinitionWithFieldStillDecodesNormally()
+    {
+        var reader = new DubboHessian2Reader(Convert.FromHexString("43009101786091"));
+        var value = Assert.IsType<Dictionary<object, object>>(reader.ReadValue());
+        Assert.Equal(1, value["x"]);
+    }
+
     [Fact]
     public void SharedReferenceDagIsStoppedByOneWholeTreeNodeBudget()
     {
