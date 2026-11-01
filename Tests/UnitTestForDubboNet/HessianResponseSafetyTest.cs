@@ -90,17 +90,25 @@ public class HessianResponseSafetyTest
     }
 
     [Theory]
-    [InlineData("58497FFFFFFF", "list length")]
-    [InlineData("4300497FFFFFFF", "class field count")]
-    [InlineData("58924E", "list length")]
-    [InlineData("43009200", "class field count")]
-    public void DeclaredCountsExceedingRemainingBytesAreRejectedBeforeAllocation(
-        string hex, string kind)
+    [InlineData("58497FFFFFFF")]
+    [InlineData("4300497FFFFFFF")]
+    [InlineData("58924E")]
+    [InlineData("43009200")]
+    public void DeclaredCountsExceedingRemainingBytesAreRejectedBeforeAllocation(string hex)
     {
         var reader = new DubboHessian2Reader(Convert.FromHexString(hex));
         var error = Assert.Throws<InvalidDataException>(() => reader.ReadValue());
-        Assert.Contains(kind, error.Message);
+        Assert.Contains("Hessian2 declared count", error.Message);
         Assert.Contains("remaining payload bytes", error.Message);
+    }
+
+    [Theory]
+    [InlineData("588F")]
+    [InlineData("56008F")]
+    public void FixedLengthListsRejectNegativeDeclaredCounts(string hex)
+    {
+        var reader = new DubboHessian2Reader(Convert.FromHexString(hex));
+        Assert.Throws<InvalidDataException>(() => reader.ReadValue());
     }
 
     [Theory]
@@ -119,6 +127,29 @@ public class HessianResponseSafetyTest
         var list = Assert.IsType<List<object>>(reader.ReadValue());
         Assert.Equal(2, list.Count);
         Assert.All(list, value => Assert.Null(value));
+    }
+
+    [Theory]
+    [InlineData("574E5A")]
+    [InlineData("55004E5A")]
+    [InlineData("5600914E")]
+    [InlineData("794E")]
+    [InlineData("71004E")]
+    public void ListFormsStillDecodeNormally(string hex)
+    {
+        var list = Assert.IsType<List<object>>(
+            new DubboHessian2Reader(Convert.FromHexString(hex)).ReadValue());
+        Assert.Null(Assert.Single(list));
+    }
+
+    [Theory]
+    [InlineData("5751905A")]
+    [InlineData("58915190")]
+    public void ListReferencesRemainAvailableWhileReadingTheirElements(string hex)
+    {
+        var list = Assert.IsType<List<object>>(
+            new DubboHessian2Reader(Convert.FromHexString(hex)).ReadValue());
+        Assert.Same(list, Assert.Single(list));
     }
 
     [Fact]
