@@ -1,0 +1,31 @@
+name: License header check
+
+# Checks source headers only; passing does not establish SGA/ICLA filing or IP
+# clearance. The project owner confirmed the contributed source authorship.
+# No bot comments are posted; inspect the Actions job log for failing file paths.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: license-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  license-header-check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: apache/skywalking-eyes/header@a196742f472feaffafea537ce5a2a4c3c53a8de4 # v0.9.0
+        with:
+          mode: check
+          token: ''

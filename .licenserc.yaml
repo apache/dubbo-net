@@ -48,8 +48,9 @@ header:
     - '.gitignore'
     - 'LICENSE'
     - 'NOTICE'
+    - 'LICENSES/**'
     - '**/*.proto'
     - '**/*.yaml'
     - '**/*.yml'
 
-  comment: on-failure
+  comment: never
