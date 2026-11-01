@@ -43,7 +43,7 @@ public class HessianResponseSafetyTest
         var body = Enumerable.Range(0, 20000).SelectMany(_ => new byte[] { (byte)'R', 0, 0 })
             .Concat(new byte[] { 3, (byte)'b', (byte)'a', (byte)'d' }).ToArray();
         Assert.Equal("bad", NativeDubboCodec.DecodeResponse(new NativeDubboFrame
-            { Status = 70, SerializationId = 2, Body = body }).ErrorMessage);
+        { Status = 70, SerializationId = 2, Body = body }).ErrorMessage);
     }
 
     [Theory]
