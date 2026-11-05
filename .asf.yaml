@@ -62,3 +62,23 @@ github:
         - root
       restrict_deletion: true
       restrict_force_push: true
+    # These checks run for PRs targeting main. Keep release branches outside this
+    # ruleset until their workflows provide the same required check contexts.
+    - name: "Required CI Checks"
+      type: branch
+      branches:
+        includes:
+          - "~DEFAULT_BRANCH"
+        excludes: []
+      bypass_teams:
+        - root
+      # The existing Default Branch Protection ruleset owns these restrictions.
+      restrict_deletion: false
+      restrict_force_push: false
+      required_status_checks:
+        - name: "build-and-test"
+          app_slug: "github-actions"
+        - name: "license-header-check"
+          app_slug: "github-actions"
+        - name: "ZooKeeper, Nacos and direct protocols"
+          app_slug: "github-actions"
