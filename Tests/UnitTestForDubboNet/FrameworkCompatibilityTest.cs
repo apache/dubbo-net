@@ -17,6 +17,7 @@
 
 using DubboNet.Clients;
 using DubboNet.Compatibility;
+using DubboNet.DubboService.DataModle.DubboInfo;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http;
@@ -56,6 +57,66 @@ public class FrameworkCompatibilityTest
             Assert.Equal(value.Split(new[] { separator }, count,
                 StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
                 StringCompatibility.SplitTrimmed(value, separator, count));
+    }
+
+    [Theory]
+    [InlineData("status::ACTIVE", 2, new[] { "status", "ACTIVE" })]
+    [InlineData("a::b", 2, new[] { "a", "b" })]
+    [InlineData("a::b:c", 2, new[] { "a", "b:c" })]
+    [InlineData("a:b::c", 2, new[] { "a", "b::c" })]
+    [InlineData(" :: status : \t : ACTIVE ", 2, new[] { "status", "ACTIVE" })]
+    [InlineData("a::", 2, new[] { "a" })]
+    [InlineData("a::b", 1, new[] { "a::b" })]
+    [InlineData("a::b", 0, new string[] { })]
+    public void TrimmedSplitWithCountHasExplicitEmptyEntrySemantics(
+        string value, int count, string[] expected)
+    {
+        // Literal expectations verify both the BCL contract and the selected
+        // library asset. Discarded empty entries do not consume count, but
+        // separators inside the final non-empty remainder must be preserved.
+        Assert.Equal(expected, value.Split(new[] { ":" }, count,
+            StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+        Assert.Equal(expected, StringCompatibility.SplitTrimmed(value, ":", count));
+    }
+
+    [Fact]
+    public void StatusKeyValueParserSkipsEmptyEntriesBeforePreservingTheValueRemainder()
+    {
+        var parser = new StatusParserProbe();
+        KeyValuePair<string, string> field = Assert.Single(parser.Parse("status::ACTIVE"));
+        Assert.Equal("status", field.Key);
+        Assert.Equal("ACTIVE", field.Value);
+
+        Dictionary<string, string> fields = parser.Parse(
+            "status::ACTIVE,endpoint:127.0.0.1:20880");
+        Assert.Equal(2, fields.Count);
+        Assert.Equal("ACTIVE", fields["status"]);
+        Assert.Equal("127.0.0.1:20880", fields["endpoint"]);
+    }
+
+    [Fact]
+    public void ThreadPoolStatusMessageParsesRepeatedSeparatorsIntoTypedFields()
+    {
+        // Exercise the production Message setter, not a duplicate parser.
+        var status = new DubboStatusInfo.ThreadPoolInfo
+        {
+            Message = "Pool status::ACTIVE,max::200,core: \t :20," +
+                "largest:15,active:1,task:15,service port::20880"
+        };
+
+        Assert.Equal("ACTIVE", status.Status);
+        Assert.Equal(200, status.Max);
+        Assert.Equal(20, status.Core);
+        Assert.Equal(15, status.Largest);
+        Assert.Equal(1, status.Active);
+        Assert.Equal(15, status.Task);
+        Assert.Equal(20880, status.Port);
+    }
+
+    private sealed class StatusParserProbe : DubboStatusInfo.ResourceStatus
+    {
+        internal Dictionary<string, string> Parse(string message) => GetKeyValuePairs(message);
+        protected override bool InitStatusResource() => true;
     }
 
     [Theory]
