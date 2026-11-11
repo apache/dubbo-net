@@ -623,7 +623,7 @@ namespace DubboNet.Clients
         /// <exception cref="DubboMetadataException">需要自动推断但元数据不可用或存在歧义。EN: Inference is required but metadata is unavailable or ambiguous.</exception>
         public async Task<DubboRequestResult> QueryAsync(DubboInvocation invocation)
         {
-            ArgumentNullException.ThrowIfNull(invocation);
+            Guard.ThrowIfNull(invocation, nameof(invocation));
             DubboInvocation effectiveInvocation = invocation;
             if (invocation.ParameterTypes == null || invocation.ParameterTypes.Count == 0)
             {
@@ -1255,7 +1255,7 @@ namespace DubboNet.Clients
             }
             finally
             {
-                _concurrentGetProviderEndPointsTasks.TryRemove(
+                _concurrentGetProviderEndPointsTasks.RemoveExact(
                     new KeyValuePair<string, Task<DubboServiceEndPointInfos>>(
                         serviceName,
                         getProviderEndPointsTask));

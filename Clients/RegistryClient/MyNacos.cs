@@ -1242,7 +1242,7 @@ namespace DubboNet.Clients.RegistryClient
                     Uri uri = BuildApiUri(serverAddress, "v1/ns/catalog/services", query);
                     using HttpResponseMessage response = await _catalogHttpClient
                         .GetAsync(uri, cancellationToken).ConfigureAwait(false);
-                    string content = await response.Content.ReadAsStringAsync(cancellationToken)
+                    string content = await HttpCompatibility.ReadAsStringAsync(response, cancellationToken)
                         .ConfigureAwait(false);
                     if (!response.IsSuccessStatusCode)
                     {
@@ -1311,7 +1311,7 @@ namespace DubboNet.Clients.RegistryClient
                             });
                             using HttpResponseMessage response = await _catalogHttpClient
                                 .PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
-                            string json = await response.Content.ReadAsStringAsync(cancellationToken)
+                            string json = await HttpCompatibility.ReadAsStringAsync(response, cancellationToken)
                                 .ConfigureAwait(false);
                             if (!response.IsSuccessStatusCode)
                             {

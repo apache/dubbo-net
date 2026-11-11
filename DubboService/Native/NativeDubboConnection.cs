@@ -129,7 +129,7 @@ namespace DubboNet.DubboService.Native
                 try
                 {
                     writeAttempted = true;
-                    await stream.WriteAsync(request, requestCancellation.Token).ConfigureAwait(false);
+                    await NetworkCompatibility.WriteAsync(stream, request, requestCancellation.Token).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -173,10 +173,7 @@ namespace DubboNet.DubboService.Native
                 };
                 try
                 {
-                    await client.ConnectAsync(
-                        _endPoint.Address,
-                        _endPoint.Port,
-                        cancellationToken).ConfigureAwait(false);
+                    await NetworkCompatibility.ConnectOwnedAsync(client, _endPoint, cancellationToken).ConfigureAwait(false);
                     NetworkStream stream = client.GetStream();
                     lock (_stateLock)
                     {
@@ -236,7 +233,7 @@ namespace DubboNet.DubboService.Native
                             await _sendGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                             try
                             {
-                                await stream.WriteAsync(
+                                await NetworkCompatibility.WriteAsync(stream,
                                     heartbeatResponse,
                                     cancellationToken).ConfigureAwait(false);
                             }
@@ -272,8 +269,8 @@ namespace DubboNet.DubboService.Native
             int read = 0;
             while (read < buffer.Length)
             {
-                int count = await stream.ReadAsync(
-                    buffer.AsMemory(read, buffer.Length - read),
+                int count = await NetworkCompatibility.ReadAsync(stream,
+                    buffer, read, buffer.Length - read,
                     cancellationToken).ConfigureAwait(false);
                 if (count == 0)
                 {

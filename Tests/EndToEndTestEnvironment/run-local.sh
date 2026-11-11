@@ -64,6 +64,7 @@ if [[ -z "$DUBBONET_PROVIDER_HOST" ]]; then
   exit 1
 fi
 export DUBBONET_PROVIDER_HOST
+run_logged compatibility-package dotnet msbuild Tests/PackageCompatibilitySmoke/Prepare.proj -nologo -v:minimal
 dotnet restore DubboNet.sln
 run_logged readiness-build dotnet build Tests/DubboClientIntegrationTests/DubboClientIntegrationTests.csproj \
   --configuration Release --no-restore -p:GeneratePackageOnBuild=false
@@ -72,10 +73,13 @@ run_logged readiness-build dotnet build Tests/DubboClientIntegrationTests/DubboC
 export DUBBONET_E2E_ENABLED=true
 export DUBBONET_E2E_ZOOKEEPER_ADDRESS=127.0.0.1:2181
 export DUBBONET_E2E_NACOS_ADDRESS=nacos://127.0.0.1:8848
-run_logged end-to-end-tests dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
-  --configuration Release --no-restore -p:GeneratePackageOnBuild=false \
-  --logger "console;verbosity=detailed" --logger "trx;LogFileName=dubbonet-end-to-end.trx" \
-  --results-directory "$log_dir/test-results"
+# Match the workflow's host order without racing the shared stateful fixtures.
+for framework in net10.0 net6.0 net8.0; do
+  run_logged "end-to-end-$framework" dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
+    --configuration Release --framework "$framework" --no-restore -p:GeneratePackageOnBuild=false \
+    --logger "console;verbosity=detailed" --logger "trx;LogFilePrefix=dubbonet-end-to-end-$framework" \
+    --results-directory "$log_dir/test-results"
+done
 
 for registry in "$DUBBONET_E2E_ZOOKEEPER_ADDRESS" "$DUBBONET_E2E_NACOS_ADDRESS"; do
   registry_kind=zookeeper

@@ -149,9 +149,7 @@ namespace DubboNet.Clients.DataModle
 
         internal DubboMethodMetadata CloneForCaller()
         {
-            Dictionary<string, string> parameters = new Dictionary<string, string>(
-                ServiceParameters ?? new Dictionary<string, string>(),
-                StringComparer.Ordinal);
+            Dictionary<string, string> parameters = CollectionCompatibility.Copy(ServiceParameters);
             return new DubboMethodMetadata
             {
                 ServiceName = ServiceName,

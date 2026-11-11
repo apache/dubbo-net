@@ -1,7 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
+    <!-- Test-only selector: NuGet sees ONE library target, so a modern test host
+         cannot silently choose net8/net10 instead of the Standard implementation. -->
+    <TargetFrameworks Condition="'$(DubboNetTestTargetFramework)' != ''">$(DubboNetTestTargetFramework)</TargetFrameworks>
+    <!-- Modern syntax does not require a modern runtime; pin the compiler contract. -->
+    <LangVersion>12.0</LangVersion>
+    <!-- Local NuGet consumer caches may contain .cs sources (e.g. NHessian).
+         Ignored build artifacts must never be picked up by the root source glob. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);artifacts/**</DefaultItemExcludes>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Title>DubboNet</Title>
     <Authors>The Apache Software Foundation</Authors>
@@ -33,6 +41,15 @@
     <PackageReference Include="DistributedLock.ZooKeeper" Version="1.0.0" />
     <PackageReference Include="nacos-sdk-csharp" Version="1.3.10" />
     <PackageReference Include="NHessian" Version="0.4.3" />
+    <!-- Directly used APIs: do not depend on Nacos to supply these transitively. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <!-- Nacos' Standard dependency group otherwise selects DependencyModel 3.1,
+         whose Framework asset pulls vulnerable Newtonsoft.Json 9.0.1. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="8.0.2" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+    <PackageReference Include="System.Memory" Version="4.5.5" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,19 +61,22 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="LICENSE">
+    <!-- Multi-target outer builds do not populate the default None glob. Include
+         package documents explicitly, so Pack keeps the licence in every mode. -->
+    <None Remove="LICENSE;NOTICE;LICENSES\DubboNet-MIT.txt;README.md" />
+    <None Include="LICENSE">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
-    <None Update="NOTICE">
+    <None Include="NOTICE">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
-    <None Update="LICENSES\DubboNet-MIT.txt">
+    <None Include="LICENSES\DubboNet-MIT.txt">
       <Pack>True</Pack>
       <PackagePath>LICENSES\DubboNet-MIT.txt</PackagePath>
     </None>
-    <None Update="README.md">
+    <None Include="README.md">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
@@ -66,4 +86,9 @@
   <ItemGroup>
       <InternalsVisibleTo Include="UnitTestForDubboNet" />
   </ItemGroup>
+
+  <Target Name="PreventPartialCompatibilityPackage" BeforeTargets="GenerateNuspec"
+          Condition="'$(DubboNetTestTargetFramework)' != ''">
+    <Error Text="Do not pack with DubboNetTestTargetFramework: release packages must contain all three assets." />
+  </Target>
 </Project>
