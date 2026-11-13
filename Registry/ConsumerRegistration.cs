@@ -24,7 +24,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace DubboNet.Clients.RegistryClient
+namespace DubboNet.Registry
 {
     // Registration belongs to the shared registry connection; leases belong to individual clients.
     internal interface IConsumerRegistrationRegistry

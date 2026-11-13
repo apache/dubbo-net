@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
+using DubboNet.Clients.RegistryClient;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace DubboNet.Clients.RegistryClient
+namespace DubboNet.Registry
 {
     /// <summary>
     /// 按连接字符串在进程内复用 Nacos 客户端，并通过引用计数记录使用情况。

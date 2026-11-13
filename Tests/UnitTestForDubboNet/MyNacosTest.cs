@@ -21,7 +21,9 @@ using System.Reflection;
 using System.Text;
 using DubboNet.Clients;
 using DubboNet.Clients.DataModle;
+using DubboNet.Metadata;
 using DubboNet.Clients.RegistryClient;
+using DubboNet.Registry;
 using Nacos.V2;
 using Nacos.V2.Naming;
 using Nacos.V2.Naming.Dtos;
@@ -102,6 +104,94 @@ public class MyNacosTest
             Assert.Contains(providers, item => item.Scheme == "dubbo" && item.Version == "2" && item.Group == "canary");
             Assert.Contains(providers, item => item.Scheme == "tri" && item.Version == "1");
         }
+    }
+
+    [Fact]
+    public async Task ProviderDiscovery_DisposeRemovesOnlyItsOwnNamingSubscription()
+    {
+        var server = new FakeNacos();
+        server.Add("1", 20880);
+        using MyNacos nacos = server.CreateClient();
+        int callsA = 0, callsB = 0;
+        using var first = new ProviderDiscovery(null!, nacos, Group, null!,
+            _ => { callsA++; return Task.CompletedTask; }, () => { });
+        using var second = new ProviderDiscovery(null!, nacos, Group, null!,
+            _ => { callsB++; return Task.CompletedTask; }, () => { });
+
+        Assert.Single((await first.GetProviderEndPointsAsync(Service)).EndPoints);
+        Assert.Single((await second.GetProviderEndPointsAsync(Service)).EndPoints);
+        Assert.Equal(1, server.NamingSubscribes);
+        await server.PushNaming();
+        Assert.Equal((1, 1), (callsA, callsB));
+
+        first.Dispose();
+        Assert.Single(server.NamingListeners);
+        await server.PushNaming();
+        Assert.Equal((1, 2), (callsA, callsB));
+        second.Dispose();
+        Assert.Empty(server.NamingListeners);
+    }
+
+    [Fact]
+    public async Task ProviderDiscovery_CoalescesConcurrentLookupsAndDoesNotCacheTheResult()
+    {
+        var server = new FakeNacos();
+        server.Add("1", 20880);
+        server.InstanceGate = new TaskCompletionSource<List<Instance>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using MyNacos nacos = server.CreateClient();
+        using var discovery = new ProviderDiscovery(null!, nacos, Group, null!,
+            _ => Task.CompletedTask, () => { });
+
+        Task<DubboServiceEndPointInfos>[] callers = Enumerable.Range(0, 32)
+            .Select(_ => discovery.GetProviderEndPointsAsync(Service)).ToArray();
+        await server.InstanceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, server.InstanceReads);
+        server.InstanceGate.SetResult(server.Instances[Assert.Single(server.Services)]);
+        Assert.All(await Task.WhenAll(callers), result => Assert.Single(result.EndPoints));
+        Assert.Equal(1, server.InstanceReads);
+
+        Assert.Single((await discovery.GetProviderEndPointsAsync(Service)).EndPoints);
+        Assert.Equal(2, server.InstanceReads);
+    }
+
+    [Fact]
+    public async Task ProviderDiscovery_DiscardsAnInFlightLookupAfterDisposal()
+    {
+        var server = new FakeNacos();
+        server.Add("1", 20880);
+        server.InstanceGate = new TaskCompletionSource<List<Instance>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using MyNacos nacos = server.CreateClient();
+        using var discovery = new ProviderDiscovery(null!, nacos, Group, null!,
+            _ => Task.CompletedTask, () => { });
+
+        Task<DubboServiceEndPointInfos> pending = discovery.GetProviderEndPointsAsync(Service);
+        await server.InstanceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        discovery.Dispose();
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => discovery.GetProviderEndPointsAsync(Service));
+        server.InstanceGate.SetResult(server.Instances[Assert.Single(server.Services)]);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => pending);
+        Assert.Empty(server.NamingListeners);
+    }
+
+    [Fact]
+    public async Task ProviderDiscovery_FullPathDoesNotShareTheServiceLookup()
+    {
+        var server = new FakeNacos();
+        server.Add("1", 20880);
+        server.InstanceGate = new TaskCompletionSource<List<Instance>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using MyNacos nacos = server.CreateClient();
+        using var discovery = new ProviderDiscovery(null!, nacos, Group, null!,
+            _ => Task.CompletedTask, () => { });
+
+        Task<DubboServiceEndPointInfos> pending = discovery.GetProviderEndPointsAsync(Service);
+        await server.InstanceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        DubboServiceEndPointInfos fullPath = await discovery.GetProviderEndPointsAsync(Service, isFullPath: true);
+        Assert.Contains("expects a Dubbo interface name", fullPath.ErrorInfo);
+        server.InstanceGate.SetResult(server.Instances[Assert.Single(server.Services)]);
+        Assert.Single((await pending).EndPoints);
     }
 
     [Fact]
@@ -522,6 +612,9 @@ public class MyNacosTest
         public Action<IListener>? DuringInitialConfig;
         public bool FailCatalog, FailConfigRead;
         public int CatalogReads, NamingSubscribes, ConfigReads, ConfigRemoves;
+        public int InstanceReads;
+        public TaskCompletionSource<List<Instance>>? InstanceGate;
+        public TaskCompletionSource InstanceReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public MyNacos CreateClient(
             string address = Address,
@@ -577,7 +670,9 @@ public class MyNacosTest
         private Task<List<Instance>> FindInstances(string name, string group)
         {
             QueriedGroups.Add(group);
-            return Task.FromResult(Instances.GetValueOrDefault(name) ?? new List<Instance>());
+            Interlocked.Increment(ref InstanceReads);
+            InstanceReadStarted.TrySetResult();
+            return InstanceGate?.Task ?? Task.FromResult(Instances.GetValueOrDefault(name) ?? new List<Instance>());
         }
         private Task<ListView<string>> Catalog(string group)
         {

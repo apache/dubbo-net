@@ -15,21 +15,14 @@
  * limitations under the License.
  */
 
-namespace DubboNet.Clients.DataModle
+namespace DubboNet.Registry
 {
     /// <summary>
-    /// FullServiceDefinition 类型字段，由 JSON 特性、读取器和写入器共享。
-    /// <para>EN: FullServiceDefinition type fields shared by JSON attributes, the reader and the writer.</para>
+    /// Nacos Naming 与 Config 的默认分组；不用于 Metadata 定义分组。
+    /// <para>EN: Default Nacos Naming and Config group, not the metadata-definition group.</para>
     /// </summary>
-    internal static class DubboTypeMetadataJsonFields
+    internal static class NacosRegistryDefaults
     {
-        internal const string Id = "id";
-        internal const string Type = "type";
-        internal const string Items = "items";
-        internal const string EnumValuesField = "enum";
-        internal const string Enums = "enums";
-        internal const string Reference = "$ref";
-        internal const string Properties = "properties";
-        internal const string TypeBuilderName = "typeBuilderName";
+        internal const string DefaultGroup = "DEFAULT_GROUP";
     }
 }

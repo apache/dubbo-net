@@ -16,6 +16,8 @@
  */
 
 using DubboNet.Clients.DataModle;
+using DubboNet.DubboService;
+using DubboNet.Registry;
 using Microsoft.Extensions.DependencyInjection;
 using MyCommonHelper;
 using Nacos.V2;
@@ -838,8 +840,8 @@ namespace DubboNet.Clients.RegistryClient
         }
 
         /// <summary>
-        /// 删除某个 DubboClient 或元数据管理器在共享 Nacos 客户端上的全部订阅。
-        /// <para>EN: Removes all subscriptions owned by one DubboClient or metadata manager from the shared Nacos client.</para>
+        /// 删除指定所有者（如 ProviderDiscovery 或元数据管理器）在共享 Nacos 客户端上的全部订阅。
+        /// <para>EN: Removes all subscriptions owned by the given owner (such as ProviderDiscovery or the metadata manager) from the shared Nacos client.</para>
         /// </summary>
         public void RemoveSubscriber(object subscriber)
         {

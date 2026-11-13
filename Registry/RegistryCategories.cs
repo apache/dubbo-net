@@ -15,17 +15,15 @@
  * limitations under the License.
  */
 
-namespace DubboNet.Clients.DataModle
+namespace DubboNet.Registry
 {
     /// <summary>
-    /// Provider 注册 URL 中，Nacos 转换器与端点解析器显式共享的查询参数键；不收录仅在解析端使用的键。
-    /// <para>EN: Explicitly shared provider URL query keys; parser-only keys remain local.</para>
+    /// Dubbo 注册中心共享的服务类别；不包含具体注册中心的路径分隔符。
+    /// <para>EN: Shared Dubbo registry categories without registry-specific path separators.</para>
     /// </summary>
-    internal static class ProviderUrlKeys
+    internal static class RegistryCategories
     {
-        internal const string Interface = "interface";
-        internal const string Disabled = "disabled";
-        internal const string Dynamic = "dynamic";
-        internal const string Weight = "weight";
+        internal const string Providers = "providers";
+        internal const string Consumers = "consumers";
     }
 }

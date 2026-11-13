@@ -16,6 +16,7 @@
  */
 
 using DubboNet.DubboService;
+using DubboNet.Clients.RegistryClient;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,7 +24,7 @@ using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace DubboNet.Clients.RegistryClient
+namespace DubboNet.Registry
 {
 
     /// <summary>

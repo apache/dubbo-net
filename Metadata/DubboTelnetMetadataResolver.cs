@@ -25,7 +25,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace DubboNet.Clients
+namespace DubboNet.Metadata
 {
     /// <summary>
     /// 表示一次 Telnet 元数据探测结果。

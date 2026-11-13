@@ -15,15 +15,17 @@
  * limitations under the License.
  */
 
-namespace DubboNet.Clients.Metadata
+namespace DubboNet.DubboService
 {
     /// <summary>
-    /// ZooKeeper 中 FullServiceDefinition 元数据路径的固定片段。
-    /// <para>EN: Fixed segments of the ZooKeeper FullServiceDefinition location.</para>
+    /// Provider 注册 URL 中，Nacos 转换器与端点解析器显式共享的查询参数键；不收录仅在解析端使用的键。
+    /// <para>EN: Explicitly shared provider URL query keys; parser-only keys remain local.</para>
     /// </summary>
-    internal static class DubboMetadataPaths
+    internal static class ProviderUrlKeys
     {
-        internal const string MetadataNode = "metadata";
-        internal const string ProviderSide = "provider";
+        internal const string Interface = "interface";
+        internal const string Disabled = "disabled";
+        internal const string Dynamic = "dynamic";
+        internal const string Weight = "weight";
     }
 }

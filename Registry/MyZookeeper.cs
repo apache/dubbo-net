@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+using DubboNet.Registry;
 using MyCommonHelper;
 using org.apache.zookeeper;
 using org.apache.zookeeper.data;

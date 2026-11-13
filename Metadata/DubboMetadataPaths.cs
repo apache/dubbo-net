@@ -15,15 +15,15 @@
  * limitations under the License.
  */
 
-namespace DubboNet.Clients
+namespace DubboNet.Metadata
 {
     /// <summary>
-    /// Provider 注册 URI 的协议 scheme，由发现与执行器选择共享；不用于 Nacos group 或消费者协议版本。
-    /// <para>EN: Provider URI schemes shared by discovery and suite selection, not registry groups or consumer versions.</para>
+    /// ZooKeeper 中 FullServiceDefinition 元数据路径的固定片段。
+    /// <para>EN: Fixed segments of the ZooKeeper FullServiceDefinition location.</para>
     /// </summary>
-    internal static class ProviderProtocolSchemes
+    internal static class DubboMetadataPaths
     {
-        internal const string Dubbo = "dubbo";
-        internal const string Tri = "tri";
+        internal const string MetadataNode = "metadata";
+        internal const string ProviderSide = "provider";
     }
 }

@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+using DubboNet.Metadata;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
