@@ -6,6 +6,8 @@ DubboNet is a Dubbo client library for .NET. It discovers Providers through ZooK
 
 > The current Apache import branch targets **.NET 10**: the library, examples, and tests all use `net10.0`. This change does not replace previously published NuGet packages from the personal project. Native Dubbo TCP invocation has been verified against a **Dubbo 2.7.3** Provider in a real environment; the first phase of Triple support has been verified against a **Dubbo 3.3.6** Java Interface Provider. Read [Compatibility](#compatibility) for the boundaries of support for other versions.
 
+[English code map](Docs/en/architecture/index.md) · [中文代码地图](Docs/zh/architecture/index.md) · [Git-indexed changelog](CHANGELOG.md)
+
 ## Features
 
 - Automatic Provider discovery and subscriptions through classic interface-level ZooKeeper directories or interface-level Nacos Naming services.
@@ -701,9 +703,9 @@ The native actuator currently has the following boundaries:
 - Failed request writes are not replayed automatically, avoiding duplicate business operations when the Provider may already have executed the request. Later requests reconnect.
 - Hosts in ZooKeeper Provider URLs must currently be IP addresses; domains/hostnames are not automatically resolved.
 
-See [Docs/NativeDubboProtocol.md](Docs/NativeDubboProtocol.md) for frame headers, request fields, and response result flags.
+See [Docs/en/protocols/native-dubbo.md](Docs/en/protocols/native-dubbo.md) for frame headers, request fields, and response result flags.
 
-See [Docs/TripleProtocol.md](Docs/TripleProtocol.md) for the first-phase Triple request format, routing headers, and explicit limitations.
+See [Docs/en/protocols/triple.md](Docs/en/protocols/triple.md) for the first-phase Triple request format, routing headers, and explicit limitations.
 
 Each Triple request uses one deadline covering both response headers and the entire response body. The Provider URL's `timeout` overrides the client's `DubboRequestTimeout` and may be longer or shorter. If absent, the client default applies; the effective value is at least 1 ms. Internal `HttpClient.Timeout` is disabled to avoid competing timeouts.
 

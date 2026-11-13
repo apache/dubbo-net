@@ -6,6 +6,8 @@ DubboNet 是一个面向 .NET 的 Dubbo 客户端库。它可以从 ZooKeeper �
 
 > 当前 Apache 导入分支目标框架为 **.NET 10**，库、示例和测试均使用 `net10.0`。本次变更不会替换此前发布的个人项目 NuGet 包。原生 Dubbo TCP 调用已在 **Dubbo 2.7.3** Provider 上完成真实环境验证；Triple 第一期已在 **Dubbo 3.3.6** Java Interface Provider 上完成真实环境验证。其他版本的支持边界请先阅读[版本兼容性 / Compatibility](#版本兼容性--compatibility)。
 
+[中文代码地图](Docs/zh/architecture/index.md) · [English code map](Docs/en/architecture/index.md) · [Git 变更索引](CHANGELOG.md)
+
 ## 功能概览 / Features
 
 - 从 ZooKeeper 的经典接口级目录或 Nacos 接口级 Naming 服务自动发现和订阅 Provider。
@@ -700,9 +702,9 @@ else
 - 请求写入失败后不会自动重放，以避免 Provider 已执行但客户端误判失败时产生重复业务操作；后续请求会重新建连。
 - ZooKeeper Provider URL 的 host 当前必须是 IP 地址，域名/主机名不会自动解析。
 
-更详细的帧头、请求体字段和响应结果 flag 请阅读 [Docs/NativeDubboProtocol.md](Docs/NativeDubboProtocol.md)。
+更详细的帧头、请求体字段和响应结果 flag 请阅读 [Docs/zh/protocols/native-dubbo.md](Docs/zh/protocols/native-dubbo.md)。
 
-Triple 第一期的请求格式、路由头和明确边界请阅读 [Docs/TripleProtocol.md](Docs/TripleProtocol.md)。
+Triple 第一期的请求格式、路由头和明确边界请阅读 [Docs/zh/protocols/triple.md](Docs/zh/protocols/triple.md)。
 
 Triple 每次请求使用一个覆盖响应头和完整响应体读取的截止时间。Provider URL 的 `timeout` 优先于客户端 `DubboRequestTimeout`（可更长或更短），未声明时使用客户端默认值；有效值最少为 1 ms。内部 `HttpClient.Timeout` 关闭，避免两个超时隐式竞争。
 
