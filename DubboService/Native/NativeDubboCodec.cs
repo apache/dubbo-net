@@ -38,8 +38,12 @@ namespace DubboNet.DubboService.Native
     internal static class NativeDubboCodec
     {
         internal const int DefaultMaxPayloadLength = 8 * 1024 * 1024;
-        internal const int MaxNormalizedNodes = 100_000;
-        internal const long MaxNormalizedJsonBytes = 32L * 1024 * 1024;
+        internal const int MaxNormalizedNodes = 2_000_000;
+        internal const int BaseNormalizedNodes = 100_000;
+        internal const int NormalizedNodesPerPayloadByte = 2;
+        internal const long MaxNormalizedJsonBytes = 64L * 1024 * 1024;
+        internal const long BaseNormalizedJsonBytes = 32L * 1024 * 1024;
+        internal const int NormalizedJsonBytesPerPayloadByte = 8;
         internal const byte Hessian2SerializationId = Frame.Hessian2SerializationId;
         internal const byte OkStatus = Frame.OkStatus;
         internal const string ProtocolVersion = "2.0.2";
@@ -212,7 +216,7 @@ namespace DubboNet.DubboService.Native
             }
 
             // Share the expansion allowance across the value/exception AND attachments.
-            NormalizationBudget budget = new NormalizationBudget();
+            NormalizationBudget budget = new NormalizationBudget(payloadLength: frame.Body.Length);
             response.ResultKind = input.ReadInt();
             switch (response.ResultKind)
             {
@@ -306,6 +310,24 @@ namespace DubboNet.DubboService.Native
         internal static string SerializeJson(object value)
         {
             return JsonSerializer.Serialize(ToJsonCompatible(value), ResultJsonOptions);
+        }
+
+        /// <summary>
+        /// 将已解码且未修改的成功状态响应输出为 JSON；普通返回值和异常已完成规范化检查。
+        /// <para>EN: Serializes an unmodified OK-status response returned by DecodeResponse.
+        /// Ordinary values and exceptions have already been normalized and budget-checked;
+        /// event values still use the checked serialization path.</para>
+        /// </summary>
+        internal static string SerializeResponseJson(NativeDubboResponse response)
+        {
+            object value = response.Exception ?? response.Value;
+
+            if (response.IsEvent)
+            {
+                return SerializeJson(value);
+            }
+
+            return JsonSerializer.Serialize(value, ResultJsonOptions);
         }
 
         internal static string DescribeException(object exception)
@@ -699,34 +721,125 @@ namespace DubboNet.DubboService.Native
 
         private sealed class NormalizationBudget
         {
+            private readonly int _nodeLimit;
+            private readonly long _jsonByteLimit;
             private int _nodes;
             private long _jsonBytes;
+            private string _lastString;
+            private long _lastStringBytes;
+
+            internal NormalizationBudget(int payloadLength)
+            {
+                _nodeLimit = (int)Math.Min(
+                    MaxNormalizedNodes,
+                    Math.Max(
+                        BaseNormalizedNodes,
+                        (long)NormalizedNodesPerPayloadByte * payloadLength
+                        )
+                    );
+                _jsonByteLimit = Math.Min(
+                    MaxNormalizedJsonBytes,
+                    Math.Max(
+                        BaseNormalizedJsonBytes,
+                        (long)NormalizedJsonBytesPerPayloadByte * payloadLength
+                        )
+                    );
+            }
 
             internal void Visit(object value)
             {
-                if (++_nodes > MaxNormalizedNodes)
-                    throw new InvalidDataException($"Hessian2 response expansion exceeds the limit of {MaxNormalizedNodes} nodes.");
+                if (++_nodes > _nodeLimit)
+                    throw new InvalidDataException($"Hessian2 response expansion exceeds the limit of {_nodeLimit} nodes.");
                 // Charge every occurrence, not only each distinct object. Otherwise
                 // shared large strings/binaries bypass a node-only DAG defense.
                 ChargeBytes(value switch
                 {
+                    null => 5L, // "null" and a separator.
+                    bool flag => flag ? 5L : 6L,
+                    sbyte number => IntegerBytes((long)number),
+                    byte number => IntegerBytes((long)number),
+                    short number => IntegerBytes((long)number),
+                    ushort number => IntegerBytes((long)number),
+                    int number => IntegerBytes((long)number),
+                    uint number => IntegerBytes((long)number),
+                    long number => IntegerBytes(number),
+                    ulong number => IntegerBytes(number),
                     string text => StringBytes(text),
                     byte[] bytes => 3L + 4L * ((bytes.LongLength + 2) / 3),
                     IDictionary => 3L,
                     IEnumerable => 3L,
-                    _ => 40L // Conservative allowance for scalars and separators.
+                    _ => 40L // Conservative allowance for other scalars and separators.
                 });
+            }
+
+            private static long IntegerBytes(long value)
+            {
+                long bytes = value < 0 ? 2L : 1L; // Sign, if any, and a separator.
+                do
+                {
+                    bytes++;
+                    value /= 10;
+                }
+                while (value != 0);
+                return bytes;
+            }
+
+            private static long IntegerBytes(ulong value)
+            {
+                long bytes = 1L; // A separator.
+                do
+                {
+                    bytes++;
+                    value /= 10;
+                }
+                while (value != 0);
+                return bytes;
             }
 
             internal void Property(string name) => ChargeBytes(StringBytes(name) + 2);
             internal void Text(string text) => ChargeBytes(StringBytes(text));
-            // A UTF-16 code unit needs at most six bytes when JSON escaped.
-            private static long StringBytes(string text) => 3L + 6L * text.Length;
+            // Count UTF-8 bytes and two-byte JSON escapes; reserve six bytes for
+            // other escaped UTF-16 code units, plus quotes and a separator.
+            private long StringBytes(string text)
+            {
+                // Reuse the calculation only; every occurrence is still charged.
+                if (text != null && ReferenceEquals(text, _lastString))
+                    return _lastStringBytes;
+
+                long bytes = 3L;
+                JavaScriptEncoder encoder = ResultJsonOptions.Encoder;
+
+                foreach (char character in text)
+                {
+                    if (char.IsSurrogate(character) || encoder.WillEncode(character))
+                    {
+                        bytes += character is '\\' or '\b' or '\f' or '\n' or '\r' or '\t'
+                            ? 2L
+                            : 6L;
+                    }
+                    else if (character <= 0x7f)
+                    {
+                        bytes += 1;
+                    }
+                    else if (character <= 0x7ff)
+                    {
+                        bytes += 2;
+                    }
+                    else
+                    {
+                        bytes += 3;
+                    }
+                }
+
+                _lastString = text;
+                _lastStringBytes = bytes;
+                return bytes;
+            }
 
             private void ChargeBytes(long count)
             {
-                if (count > MaxNormalizedJsonBytes - _jsonBytes)
-                    throw new InvalidDataException($"Hessian2 response expansion exceeds the conservative JSON size budget of {MaxNormalizedJsonBytes} bytes.");
+                if (count > _jsonByteLimit - _jsonBytes)
+                    throw new InvalidDataException($"Hessian2 response expansion exceeds the conservative JSON size budget of {_jsonByteLimit} bytes.");
                 _jsonBytes += count;
             }
         }
@@ -736,7 +849,7 @@ namespace DubboNet.DubboService.Native
             return ToJsonCompatible(
                 value,
                 new HashSet<object>(ReferenceEqualityComparer.Instance),
-                budget ?? new NormalizationBudget());
+                budget ?? new NormalizationBudget(payloadLength: 0));
         }
 
         private static object ToJsonCompatible(object value, HashSet<object> activeReferences, NormalizationBudget budget, int depth = 0)
