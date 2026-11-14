@@ -1,7 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Run modern/native coverage first, then the Standard consumer on .NET 6.
+         Keep .NET 8 coverage; the core library itself has no net6.0 target. -->
+    <TargetFrameworks>net10.0;net6.0;net8.0</TargetFrameworks>
+    <!-- Missing older runtimes must fail, not silently run on a newer major. -->
+    <RollForward>LatestPatch</RollForward>
+    <!-- xUnit's collection lock is process-local. SDK 9+ runs TFMs concurrently
+         by default, which races updates to the SAME stateful Java fixture users. -->
+    <TestTfmsInParallel>false</TestTfmsInParallel>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

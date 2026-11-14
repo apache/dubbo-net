@@ -4,7 +4,7 @@
 
 DubboNet is a Dubbo client library for .NET. It discovers Providers through ZooKeeper or Nacos, selects a transport actuator based on the Provider URL, and invokes Java interfaces through classic Dubbo TCP/Hessian2 or Dubbo 3 Triple HTTP/JSON. The caller does not need to reference a Java interface JAR.
 
-> The current Apache import branch targets **.NET 10**: the library, examples, and tests all use `net10.0`. This change does not replace previously published NuGet packages from the personal project. Native Dubbo TCP invocation has been verified against a **Dubbo 2.7.3** Provider in a real environment; the first phase of Triple support has been verified against a **Dubbo 3.3.6** Java Interface Provider. Read [Compatibility](#compatibility) for the boundaries of support for other versions.
+> The core library targets **.NET Standard 2.0, .NET 8 and .NET 10**. Building the source still requires the .NET 10 SDK; examples use .NET 10, unit tests run on .NET 8/10, and E2E also validates .NET 6 consumers. These targets apply to this source branch and packages built from it, not previously published personal-project packages. Native Dubbo TCP invocation has been verified against a **Dubbo 2.7.3** Provider; the first phase of Triple support has been verified against a **Dubbo 3.3.6** Java Interface Provider. Read [Compatibility](#compatibility) for the boundaries of support.
 
 [English code map](Docs/en/architecture/index.md) · [中文代码地图](Docs/zh/architecture/index.md) · [Git-indexed changelog](CHANGELOG.md)
 
@@ -64,7 +64,7 @@ If the package has not been published, or you need the latest implementation in 
 </ItemGroup>
 ```
 
-Building the current source requires the .NET 10 SDK; the examples and tests use the .NET 10 Runtime. The library built from this branch only targets `net10.0` and cannot be referenced directly by .NET 6/7/8/9 applications. Those applications must upgrade or continue using a previously published compatible package. The main dependencies are `DistributedLock.ZooKeeper`, `nacos-sdk-csharp`, and `NHessian`.
+Building the source requires the .NET 10 SDK; examples use the .NET 10 Runtime. The library package contains `netstandard2.0;net8.0;net10.0`: NuGet selects `net8.0` for .NET 8/9, `net10.0` for .NET 10, and the Standard asset for compatible older consumers. Consumers do not need the .NET 10 Runtime just to use the Standard/net8 asset. Existing invocation APIs are unchanged. Main dependencies remain `DistributedLock.ZooKeeper`, `nacos-sdk-csharp` and `NHessian`; see the [dependency audit and runtime boundaries](Docs/FrameworkCompatibility.md).
 
 ## Quick Start
 
@@ -666,9 +666,12 @@ The table distinguishes real-environment verification from conditional compatibi
 
 | Component or version | Support status | Notes |
 | --- | --- | --- |
-| .NET 10 | **Current target** | Library, examples, and tests target `net10.0`; CI uses the .NET 10 SDK |
-| .NET 6/7/8/9 | **Cannot reference the current branch** | No lower TFM is provided by this branch; this change does not replace previously published personal-project packages |
-| .NET Framework / .NET Standard | **Not supported by the current package** | No `netstandard2.0`, `netstandard2.1`, or .NET Framework target |
+| .NET 8 / .NET 10 | **Native targets; full unit and E2E test hosts** | NuGet selects the matching asset; the complete suites also run against the forced Standard DLL on both hosts |
+| .NET 9 | **Consumable via net8.0; not independently runtime-tested** | Framework compatibility does not extend the runtime vendor's support lifecycle |
+| .NET 6 | **Standard consumer; full provider-method E2E compatibility check** | CI runs the complete E2E suite on .NET 6; local-package Native/Triple smoke is also available. This does not extend the runtime vendor's support lifecycle |
+| .NET 7 | **Consumable via Standard; not independently runtime-tested** | Compatibility is conditional on the application's complete dependency graph |
+| .NET Framework | **Conditional, not full registry support** | A Windows/.NET Framework 4.8 package smoke job covers Native/Triple and deadlines; macOS cannot validate Framework execution. Nacos 2 SDK gRPC streaming is not automatically supported. See [boundaries](Docs/FrameworkCompatibility.md) |
+| Other Standard 2.0 implementations | **API-compatible candidates, unverified** | Unity, Xamarin, Mono, mobile, trimming and NativeAOT are not implied by the TFM |
 | Classic interface-level ZooKeeper registration | **Supported** | Reads `/dubbo/{interface}/providers` and installs watches |
 | Nacos 2.5.4 interface-level registration | **Verified in a real environment** | Naming Provider discovery/subscriptions and Config remote metadata reads/listeners; verified with Dubbo 3.2.20 and 3.3.6 |
 | Other registries such as Consul or Kubernetes | **Not implemented** | `DubboClient` currently implements ZooKeeper and Nacos |
@@ -811,13 +814,20 @@ This is expected. `QuerySuccess` only indicates invocation-layer success; parse 
 
 ## Build and Test
 
-The .NET 10 SDK is required. All projects use `net10.0`; the .NET 6 Runtime is no longer needed:
+The .NET 10 SDK and .NET 8/10 runtimes are required for unit tests. The full E2E suite also requires the .NET 6 Runtime. The library builds all three targets; examples still use `net10.0`:
 
 ```bash
+dotnet msbuild Tests/PackageCompatibilitySmoke/Prepare.proj
 dotnet restore DubboNet.sln
 dotnet build DubboNet.sln --no-restore
 dotnet test Tests/UnitTestForDubboNet/UnitTestForDubboNet.csproj --no-restore
 ```
+
+The preparation command builds a private local NuGet for the package smoke
+project, which is also loaded by the IDE/solution. Run it on a fresh checkout and
+again after library edits when validating a new package. Project-local feed/cache
+settings work with ordinary restore; no public package is substituted. See
+[package-consumer validation](Docs/FrameworkCompatibility.md#reproducing-validation).
 
 `DubboClientIntegrationTests` and `QueryDemo` default to local addresses only: `localhost:2181` for ZooKeeper, `nacos://localhost:8848` for Nacos, and `localhost` for direct Provider access. Remote hosts must be supplied at runtime through command-line arguments or environment variables; no public test address is built in.
 
@@ -879,6 +889,9 @@ No personal server, private JAR, or registry secret is required.
 - ZooKeeper covers Dubbo 2.7.23, 3.1.11, 3.2.20, and 3.3.6; Nacos covers 3.2.20 and 3.3.6.
 - [`Tests/DubboNetEndToEndTests`](Tests/DubboNetEndToEndTests) adds 150 method-invocation cases
   (25 signatures across six combinations) and six metadata coverage checks.
+- The full 156-case suite runs sequentially on .NET 10, .NET 6, then .NET 8;
+  .NET 6 automatically consumes the Standard DLL. Forced-Standard checks on .NET 10/8
+  remain, with separate logs/TRX per run and no major runtime roll-forward.
 - Both `DubboClientIntegrationTests` and `QueryDemo` execute with ZooKeeper and Nacos;
   Native TCP/Hessian2 and Triple HTTP/JSON direct calls are also checked.
 - Expected business exceptions require their test marker; transport failures do not count as success.
@@ -892,7 +905,7 @@ Providers can be discovered through the configured registry paths or invoked acr
 protocols. Keeping it enabled catches path/layout and interoperability regressions.
 Only newer updates to the same PR cancel an earlier run; main/manual runs are independent.
 
-On Linux with Docker Compose v2, JDK 8, Maven, the .NET 10 SDK, iproute2, and GNU coreutils:
+On Linux with Docker Compose v2, JDK 8, Maven, the .NET 10 SDK, .NET 6/8/10 runtimes, iproute2, and GNU coreutils:
 
 ```bash
 Tests/EndToEndTestEnvironment/run-local.sh

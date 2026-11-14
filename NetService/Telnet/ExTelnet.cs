@@ -85,17 +85,17 @@ namespace NetService.Telnet
                     throw new Exception("beatPeriod illegal");
                 }
                 BeatPeriod = beatPeriod;
-                latestCommandTick = Environment.TickCount64;
+                latestCommandTick = RuntimeCompatibility.TickCount64;
             }
 
             public void MarkSent()
             {
-                Interlocked.Exchange(ref latestCommandTick, Environment.TickCount64);
+                Interlocked.Exchange(ref latestCommandTick, RuntimeCompatibility.TickCount64);
             }
 
             public int GetNextPeriod()
             {
-                long elapsedMilliseconds = Environment.TickCount64 - Interlocked.Read(ref latestCommandTick);
+                long elapsedMilliseconds = RuntimeCompatibility.TickCount64 - Interlocked.Read(ref latestCommandTick);
                 return elapsedMilliseconds >= BeatPeriod ? 0 : BeatPeriod - (int)elapsedMilliseconds;
             }
         }
@@ -111,6 +111,8 @@ namespace NetService.Telnet
         //private ArrayList optionsList = new ArrayList();
 
         private Socket mySocket;
+        private readonly Func<Socket, EndPoint, CancellationToken, Task> _connectSocketAsync =
+            NetworkCompatibility.ConnectOwnedAsync;
         //private AsyncCallback recieveData;
 
         private IPEndPoint iep;
@@ -336,6 +338,14 @@ namespace NetService.Telnet
             //recieveData = new AsyncCallback(OnRecievedData);
         }
 
+        // Internal test seam for deterministic connection-deadline tests; the
+        // public constructors always use the owned-socket compatibility helper.
+        internal ExTelnet(IPEndPoint endpoint, Func<Socket, EndPoint, CancellationToken, Task> connect)
+            : this(endpoint)
+        {
+            _connectSocketAsync = connect ?? throw new ArgumentNullException(nameof(connect));
+        }
+
         //public ExTelnet(IPEndPoint yourEp) : this(yourEp, 50000) { }
 
         /// <summary>
@@ -512,17 +522,20 @@ namespace NetService.Telnet
                 //如果设置过连接超时
                 if(connectTimeOut>0)
                 {
-                    CancellationTokenSource tokenSource = new CancellationTokenSource();
+                    using CancellationTokenSource tokenSource = new CancellationTokenSource(connectTimeOut);
                     CancellationToken ct = tokenSource.Token;
-                    Task cancelTask = Task.Delay(connectTimeOut);
-                    Task connectTask = mySocket.ConnectAsync(iep,ct).AsTask(); // 带CancellationToken的重载返回的是ValueTask，WhenAny需要Task
-
-                    //double await so if cancelTask throws exception, this throws it
-                    await await Task.WhenAny(connectTask, cancelTask);
-                    if(!connectTask.IsCompleted)
+                    // Only the new connection attempt is owned here. The Standard
+                    // fallback aborts it on timeout and releases its timer/registration.
+                    try
                     {
-                        tokenSource.Cancel();
-                        throw new Exception($"Connect timed out for specify time : {connectTimeOut}ms");
+                        await _connectSocketAsync(mySocket, iep, ct);
+                    }
+                    catch (OperationCanceledException ex) when (tokenSource.IsCancellationRequested)
+                    {
+                        // This token represents ONLY the Telnet connection deadline.
+                        // Retain the original duration-bearing diagnostics without
+                        // relabeling cancellation in other users of the shared helper.
+                        throw new TimeoutException($"Connect timed out for specify time : {connectTimeOut}ms", ex);
                     }
                 }
                 else
@@ -964,7 +977,7 @@ namespace NetService.Telnet
                 int sentLength = 0;
                 while (sentLength < yourData.Length)
                 {
-                    int currentSentLength = await socket.SendAsync(yourData.AsMemory(sentLength), SocketFlags.None);
+                    int currentSentLength = await NetworkCompatibility.SendAsync(socket, yourData, sentLength);
                     if (currentSentLength <= 0)
                     {
                         nowErrorMes = "Socket closed before all data was sent";

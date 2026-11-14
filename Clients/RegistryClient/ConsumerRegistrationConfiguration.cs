@@ -64,7 +64,7 @@ namespace DubboNet.Clients.RegistryClient
 
         internal void Configure(ConsumerRegistrationOptions options)
         {
-            ArgumentNullException.ThrowIfNull(options);
+            Guard.ThrowIfNull(options, nameof(options));
             lock (_sync)
             {
                 if (_shutdown) throw new InvalidOperationException("Consumer registration is shutting down.");

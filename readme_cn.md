@@ -4,7 +4,7 @@
 
 DubboNet 是一个面向 .NET 的 Dubbo 客户端库。它可以从 ZooKeeper 或 Nacos 发现 Provider，依据 Provider URL 选择传输执行器，并通过经典 Dubbo TCP/Hessian2 或 Dubbo 3 Triple HTTP/JSON 调用 Java 接口，因此调用方不需要引用 Java 接口 JAR。
 
-> 当前 Apache 导入分支目标框架为 **.NET 10**，库、示例和测试均使用 `net10.0`。本次变更不会替换此前发布的个人项目 NuGet 包。原生 Dubbo TCP 调用已在 **Dubbo 2.7.3** Provider 上完成真实环境验证；Triple 第一期已在 **Dubbo 3.3.6** Java Interface Provider 上完成真实环境验证。其他版本的支持边界请先阅读[版本兼容性 / Compatibility](#版本兼容性--compatibility)。
+> 核心库同时目标化 **.NET Standard 2.0、.NET 8 和 .NET 10**。源码构建仍需要 .NET 10 SDK；示例使用 .NET 10，单元测试运行于 .NET 8/10，端到端测试也验证 .NET 6 消费者。这些目标适用于当前源码及由其构建的新包，不会改变此前发布的个人项目 NuGet 包。原生 Dubbo TCP 已在 **Dubbo 2.7.3** Provider 上完成真实环境验证；Triple 第一期已在 **Dubbo 3.3.6** Java Interface Provider 上完成真实环境验证。请先阅读[版本兼容性 / Compatibility](#版本兼容性--compatibility)。
 
 [中文代码地图](Docs/zh/architecture/index.md) · [English code map](Docs/en/architecture/index.md) · [Git 变更索引](CHANGELOG.md)
 
@@ -64,7 +64,7 @@ dotnet add package DubboNet --version 3.6.2
 </ItemGroup>
 ```
 
-当前源码编译需要 .NET 10 SDK，示例和测试使用 .NET 10 Runtime。当前分支生成的类库仅提供 `net10.0` 目标，不能再被 .NET 6/7/8/9 应用直接引用；旧版本应用需要升级或继续使用此前兼容的已发布包。项目的主要依赖是 `DistributedLock.ZooKeeper`、`nacos-sdk-csharp` 和 `NHessian`。
+源码编译需要 .NET 10 SDK，示例使用 .NET 10 Runtime。类库包包含 `netstandard2.0;net8.0;net10.0`：.NET 8/9 自动选择 net8，.NET 10 选择 net10，兼容的较旧应用选择 Standard 产物。使用 Standard/net8 产物不要求应用安装 .NET 10 Runtime；原有调用 API 不变。主要依赖仍是 `DistributedLock.ZooKeeper`、`nacos-sdk-csharp` 和 `NHessian`，详见[依赖审计及运行时边界](Docs/FrameworkCompatibility.md)。
 
 ## 快速开始 / Quick Start
 
@@ -665,9 +665,12 @@ else
 
 | 组件或版本 | 支持状态 | 说明 |
 | --- | --- | --- |
-| .NET 10 | **当前目标** | 库、示例和测试均目标化 `net10.0`，CI 使用 .NET 10 SDK |
-| .NET 6/7/8/9 | **当前分支不支持引用** | 本分支不再提供较低版本 TFM；此前个人项目已发布包不会因本次修改被替换 |
-| .NET Framework / .NET Standard | **当前包不支持** | 未提供 `netstandard2.0`、`netstandard2.1` 或 .NET Framework 目标 |
+| .NET 8 / .NET 10 | **原生目标，完整单元及端到端测试宿主** | 自动选择对应产物；两种宿主也运行强制加载 Standard DLL 的完整测试 |
+| .NET 9 | **可通过 net8.0 引用，未单独验证运行时** | 框架兼容不代表延长运行时厂商支持周期 |
+| .NET 6 | **Standard 消费者，完整 Provider 方法端到端兼容验证** | CI 在 .NET 6 上运行完整端到端用例，也可运行真实本地包的 Native/Triple 冒烟；不代表延长运行时厂商支持周期 |
+| .NET 7 | **可通过 Standard 引用，未单独验证运行时** | 仍需确保应用的完整依赖链兼容 |
+| .NET Framework | **有条件兼容，不承诺注册中心全功能** | 新增 Windows/.NET Framework 4.8 包冒烟任务，覆盖 Native/Triple 与超时；macOS 无法验证 Framework 执行。Nacos 2 SDK 的 gRPC 流式通信不会因 Standard 自动兼容，见[边界说明](Docs/FrameworkCompatibility.md) |
+| 其他 Standard 2.0 实现 | **API 层面可作为候选，尚未验证** | 不据此承诺 Unity、Xamarin、Mono、移动平台、裁剪或 NativeAOT |
 | ZooKeeper 经典接口级注册 | **支持** | 读取 `/dubbo/{interface}/providers` 并注册 watch |
 | Nacos 2.5.4 接口级注册 | **真实验证** | 使用 Naming 服务发现/订阅 Provider，并从 Config 读取/监听远程元数据；已验证 Dubbo 3.2.20、3.3.6 |
 | Consul、Kubernetes 等其他注册中心 | **未实现** | 当前 `DubboClient` 实现 ZooKeeper 与 Nacos |
@@ -810,13 +813,18 @@ Dubbo 3.3.6 的默认 Triple HTTP/JSON 映射不能可靠区分全部 Java 重�
 
 ## 构建与测试 / Build and Test
 
-需要 .NET 10 SDK。所有项目均使用 `net10.0`，不再需要安装 .NET 6 Runtime：
+单元测试需要 .NET 10 SDK 及 .NET 8/10 Runtime；完整端到端测试还需要 .NET 6 Runtime。类库构建三个目标，示例仍使用 `net10.0`：
 
 ```bash
+dotnet msbuild Tests/PackageCompatibilitySmoke/Prepare.proj
 dotnet restore DubboNet.sln
 dotnet build DubboNet.sln --no-restore
 dotnet test Tests/UnitTestForDubboNet/UnitTestForDubboNet.csproj --no-restore
 ```
+
+准备命令为解决方案中的包冒烟工程构建专用本地 NuGet。首次检出时先执行一次；
+修改库代码后，要验证新包时再执行一次。工程级包源与缓存配置可用于普通还原及
+IDE 自动还原，不会替换成公网旧包，详见[包消费验证](Docs/FrameworkCompatibility.md#reproducing-validation)。
 
 `DubboClientIntegrationTests` 和 `QueryDemo` 默认只使用本机：ZooKeeper 为 `localhost:2181`，Nacos 为 `nacos://localhost:8848`，直连 Provider 的主机为 `localhost`。远程主机必须在运行时通过命令行或环境变量传入，没有内置公网测试地址。
 
@@ -878,6 +886,8 @@ ZooKeeper 3.8.4 / Nacos 2.5.4 容器，并从
 - ZooKeeper 覆盖 Dubbo 2.7.23、3.1.11、3.2.20、3.3.6；Nacos 覆盖 3.2.20、3.3.6。
 - [`Tests/DubboNetEndToEndTests`](Tests/DubboNetEndToEndTests) 提供 150 个方法调用用例
   （25 个签名 × 6 种组合），另有 6 个元数据覆盖校验。
+- 完整 156 项用例依次在 .NET 10、.NET 6、.NET 8 上执行；.NET 6 自动加载 Standard DLL。
+  原有 .NET 10/8 强制加载 Standard 的验证仍保留，各次运行独立保存日志/TRX，禁止跨大版本滚动运行时。
 - `DubboClientIntegrationTests` 和 `QueryDemo` 均在 ZooKeeper、Nacos 模式下实际执行，
   同时校验 Native TCP/Hessian2、Triple HTTP/JSON 直连。
 - 预期业务异常必须包含测试标记，不能把传输故障计为通过。
@@ -889,7 +899,7 @@ ZooKeeper 3.8.4 / Nacos 2.5.4 容器，并从
 以及不同协议间的调用确实成功；保留它能够发现路径布局和协议互通回归。
 同一 PR 的新提交会取消旧运行，main 推送和手动运行则互不取消。
 
-在安装 Docker Compose v2、JDK 8、Maven、.NET 10 SDK、iproute2 和 GNU coreutils 的 Linux 上运行：
+在安装 Docker Compose v2、JDK 8、Maven、.NET 10 SDK、.NET 6/8/10 Runtime、iproute2 和 GNU coreutils 的 Linux 上运行：
 
 ```bash
 Tests/EndToEndTestEnvironment/run-local.sh

@@ -24,6 +24,8 @@ using DubboNet.Testing;
 using System.Net;
 using System.Text.Json;
 
+LibraryAssetVerification.Verify();
+
 const string DataTypeService = "com.example.dubbonet.api.DataTypeService";
 const string EchoService = "com.example.dubbonet.api.EchoService";
 const string OrderService = "com.example.dubbonet.api.OrderService";

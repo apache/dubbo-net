@@ -64,7 +64,13 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: |
+            6.0.x
+            8.0.x
+            10.0.x
+
+      - name: Prepare the local NuGet consumer before solution restore
+        run: dotnet msbuild Tests/PackageCompatibilitySmoke/Prepare.proj -nologo -v:minimal
 
       - name: Start temporary registries
         run: docker compose -f Tests/EndToEndTestEnvironment/compose.yaml up -d
@@ -100,7 +106,8 @@ jobs:
       - name: Wait for Provider and metadata publication
         run: Tests/EndToEndTestEnvironment/wait-for-environment.sh "$E2E_LOG_DIR"
 
-      - name: Test every provider method end to end
+      # Keep these hosts sequential: the Java fixtures include stateful updates.
+      - name: Test every provider method on .NET 10 (native DLL)
         env:
           DUBBONET_E2E_ENABLED: "true"
           DUBBONET_E2E_ZOOKEEPER_ADDRESS: 127.0.0.1:2181
@@ -109,12 +116,53 @@ jobs:
           dotnet test
           Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj
           --configuration Release
+          --framework net10.0
           --no-restore
           -p:GeneratePackageOnBuild=false
           --logger "console;verbosity=detailed"
-          --logger "trx;LogFileName=dubbonet-end-to-end.trx"
+          --logger "trx;LogFilePrefix=dubbonet-end-to-end-net10"
           --results-directory "$E2E_LOG_DIR/test-results"
-          2>&1 | tee "$E2E_LOG_DIR/end-to-end-tests.log"
+          2>&1 | tee "$E2E_LOG_DIR/end-to-end-net10.log"
+
+      - name: Test every provider method on .NET 6 (Standard DLL)
+        env:
+          DUBBONET_E2E_ENABLED: "true"
+          DUBBONET_E2E_ZOOKEEPER_ADDRESS: 127.0.0.1:2181
+          DUBBONET_E2E_NACOS_ADDRESS: nacos://127.0.0.1:8848
+        run: >-
+          dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj
+          --configuration Release
+          --framework net6.0
+          --no-restore
+          -p:GeneratePackageOnBuild=false
+          --logger "console;verbosity=detailed"
+          --logger "trx;LogFilePrefix=dubbonet-end-to-end-net6"
+          --results-directory "$E2E_LOG_DIR/test-results"
+          2>&1 | tee "$E2E_LOG_DIR/end-to-end-net6.log"
+
+      - name: Verify the real Standard NuGet consumer on .NET 6
+        run: >-
+          dotnet run
+          --project Tests/PackageCompatibilitySmoke/PackageCompatibilitySmoke.csproj
+          --configuration Release --framework net6.0 --no-restore
+          -- netstandard2.0
+          2>&1 | tee "$E2E_LOG_DIR/package-consumer-net6.log"
+
+      - name: Test every provider method on .NET 8 (native DLL)
+        env:
+          DUBBONET_E2E_ENABLED: "true"
+          DUBBONET_E2E_ZOOKEEPER_ADDRESS: 127.0.0.1:2181
+          DUBBONET_E2E_NACOS_ADDRESS: nacos://127.0.0.1:8848
+        run: >-
+          dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj
+          --configuration Release
+          --framework net8.0
+          --no-restore
+          -p:GeneratePackageOnBuild=false
+          --logger "console;verbosity=detailed"
+          --logger "trx;LogFilePrefix=dubbonet-end-to-end-net8"
+          --results-directory "$E2E_LOG_DIR/test-results"
+          2>&1 | tee "$E2E_LOG_DIR/end-to-end-net8.log"
 
       - name: Test ZooKeeper discovery and all Dubbo versions
         run: >-
@@ -155,6 +203,32 @@ jobs:
           -p:GeneratePackageOnBuild=false
           -- --registry nacos://127.0.0.1:8848 --provider-host "$DUBBONET_PROVIDER_HOST"
           2>&1 | tee "$E2E_LOG_DIR/query-demo-nacos.log"
+
+      - name: Verify the Standard DLL against every provider method on .NET 8 and 10
+        env:
+          DUBBONET_E2E_ENABLED: "true"
+          DUBBONET_E2E_ZOOKEEPER_ADDRESS: 127.0.0.1:2181
+          DUBBONET_E2E_NACOS_ADDRESS: nacos://127.0.0.1:8848
+        # .NET 6 already selected Standard above; repeat only the modern hosts.
+        run: |
+          dotnet restore Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj -p:DubboNetTestTargetFramework=netstandard2.0
+          for framework in net10.0 net8.0; do
+            dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
+              --configuration Release --framework "$framework" --no-restore \
+              -p:DubboNetTestTargetFramework=netstandard2.0 \
+              -p:GeneratePackageOnBuild=false \
+              --logger "trx;LogFilePrefix=standard-end-to-end-$framework" \
+              --results-directory "$E2E_LOG_DIR/test-results" \
+              2>&1 | tee "$E2E_LOG_DIR/standard-end-to-end-$framework.log"
+          done
+
+      - name: Verify Standard discovery, metadata and examples with both registries
+        run: |
+          for registry in 127.0.0.1:2181 nacos://127.0.0.1:8848; do
+            if [[ "$registry" == nacos:* ]]; then kind=nacos; else kind=zookeeper; fi
+            dotnet run --project Tests/DubboClientIntegrationTests/DubboClientIntegrationTests.csproj -c Release -p:DubboNetTestTargetFramework=netstandard2.0 -p:GeneratePackageOnBuild=false -- --registry "$registry" --provider-host "$DUBBONET_PROVIDER_HOST" 2>&1 | tee "$E2E_LOG_DIR/standard-integration-$kind.log"
+            dotnet run --project Tests/QueryDemo/QueryDemo.csproj -c Release -p:DubboNetTestTargetFramework=netstandard2.0 -p:GeneratePackageOnBuild=false -- --registry "$registry" --provider-host "$DUBBONET_PROVIDER_HOST" 2>&1 | tee "$E2E_LOG_DIR/standard-query-demo-$kind.log"
+          done
 
       - name: Collect registry logs
         if: always()

@@ -60,7 +60,7 @@ namespace DubboNet.DubboService.DataModle.DubboInfo
                     string epFrom = oneLine.Substring(1, tempEnd - 1);
                     string epTo = oneLine.Substring(tempEnd + IP_SPIT.Length);
                     IPEndPoint iPEndPointFrom, iPEndPointTo = null;
-                    if (IPEndPoint.TryParse(epFrom, out iPEndPointFrom) && IPEndPoint.TryParse(epTo, out iPEndPointTo))
+                    if (EndpointCompatibility.TryParse(epFrom, out iPEndPointFrom) && EndpointCompatibility.TryParse(epTo, out iPEndPointTo))
                     {
                         dubboPsInfo.Lines.Add(new KeyValuePair<IPEndPoint, IPEndPoint>(iPEndPointFrom, iPEndPointTo));
                     }

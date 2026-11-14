@@ -462,11 +462,11 @@ namespace DubboNet.DubboService.Native
                 do
                 {
                     int length = _byteCursor.ReadUInt16();
-                    chunks.Write(_byteCursor.ReadSpan(length));
+                    _byteCursor.CopyTo(chunks, length);
                     tag = _byteCursor.ReadByte();
                 } while (tag == Hessian2Tags.BinaryChunk);
                 int finalLength = ReadFinalBinaryLength(tag);
-                chunks.Write(_byteCursor.ReadSpan(finalLength));
+                _byteCursor.CopyTo(chunks, finalLength);
                 return chunks.ToArray();
             }
             return _byteCursor.ReadBytes(ReadFinalBinaryLength(tag));

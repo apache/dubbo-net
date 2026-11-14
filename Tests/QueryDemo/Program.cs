@@ -22,6 +22,8 @@ using DubboNet.DubboService.DataModle;
 using DubboNet.Testing;
 using System.Text.Json;
 
+LibraryAssetVerification.Verify();
+
 const string DubboRootPath = "/dubbo-3.3.6";
 const string EchoService = "com.example.dubbonet.api.EchoService";
 const string DataTypeService = "com.example.dubbonet.api.DataTypeService";

@@ -64,7 +64,7 @@ namespace DubboNet.Clients.RegistryClient
                 ["client"] = "dubbonet",
                 ["dubbo"] = "2.0.2",
                 ["dynamic"] = "true",
-                ["pid"] = Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
+                ["pid"] = RuntimeCompatibility.ProcessId.ToString(CultureInfo.InvariantCulture),
                 ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
                 ["instance-id"] = options.InstanceId,
                 ["registry-id"] = OwnerId

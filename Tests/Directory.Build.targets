@@ -1,0 +1,18 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/LibraryAssetVerification.cs"
+             Link="LibraryAssetVerification.cs"
+             Condition="'$(MSBuildProjectName)' != 'PackageCompatibilitySmoke'" />
+    <AssemblyMetadata Include="DubboNetExpectedTargetFramework"
+                      Value="$(DubboNetTestTargetFramework)"
+                      Condition="'$(DubboNetTestTargetFramework)' != ''" />
+    <!-- net6 consumers select the Standard asset automatically. Do not mistake
+         the test host's target for a non-existent native net6 library target. -->
+    <AssemblyMetadata Include="DubboNetExpectedTargetFramework"
+                      Value="netstandard2.0"
+                      Condition="'$(DubboNetTestTargetFramework)' == '' and '$(TargetFramework)' == 'net6.0'" />
+    <AssemblyMetadata Include="DubboNetExpectedTargetFramework"
+                      Value="$(TargetFramework)"
+                      Condition="'$(DubboNetTestTargetFramework)' == '' and '$(TargetFramework)' != 'net6.0'" />
+  </ItemGroup>
+</Project>
