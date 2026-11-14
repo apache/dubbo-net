@@ -46,7 +46,9 @@
     <!-- Nacos' Standard dependency group otherwise selects DependencyModel 3.1,
          whose Framework asset pulls vulnerable Newtonsoft.Json 9.0.1. -->
     <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="8.0.2" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
-    <PackageReference Include="System.Text.Json" Version="8.0.6" />
+    <!-- Modern targets use the shared framework. Keep the Standard dependency
+         explicit without relying on SDK package pruning to remove it elsewhere. -->
+    <PackageReference Include="System.Text.Json" Version="8.0.6" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
     <PackageReference Include="System.Memory" Version="4.5.5" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
     <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" Condition="'$(TargetFramework)' == 'netstandard2.0'" />

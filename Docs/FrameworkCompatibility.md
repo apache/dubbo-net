@@ -51,7 +51,7 @@ consumer graph, not just DubboNet's own target, must be checked.
 | nacos-sdk-csharp | 1.3.10 | Existing Naming/Config SDK, unchanged; gRPC limitations below |
 | NHessian | 0.4.3 | Existing Hessian binding, unchanged |
 | Microsoft.Extensions.DependencyInjection | 8.0.1 | Directly used by MyNacos; avoid relying on an SDK transitive dependency |
-| System.Text.Json | 8.0.6 | Directly used; compatible patch-level baseline rather than introducing a new major solely for portability |
+| System.Text.Json | 8.0.6 (Standard only) | Explicit Standard dependency; modern assets use the shared framework without relying on package pruning to remove a redundant direct reference |
 | Microsoft.Bcl.AsyncInterfaces | 8.0.0 (Standard only) | Existing public IAsyncDisposable contract |
 | System.Memory | 4.5.5 (Standard only) | BinaryPrimitives/Span used by bounded protocol parsing |
 | System.Threading.Tasks.Extensions | 4.5.4 (Standard only) | ValueTask on the Standard API surface |
@@ -264,3 +264,29 @@ and restored/built the solution successfully. Its initial fully uncached depende
 download hit upstream NuGet EOF failures; the successful retry reused trusted
 third-party dependency caches, but deliberately did not copy any DubboNet package.
 No cache deletion, signature bypass or public-release substitution was used.
+
+### Review follow-up validation (2026-11-14)
+
+The JSON package reference is now explicitly Standard-only. Both the default pack
+and a pack with `RestoreEnablePackagePruning=false` retain System.Text.Json 8.0.6
+in the Standard dependency group and omit it from the modern groups. This does
+not alter dependency declarations made by Nacos itself.
+
+Empty/null string separators now follow the BCL string-array overload without
+entering a non-advancing loop. Telnet's own connection deadline again retains the
+original duration-bearing error and state-report messages; cancellation semantics
+of the shared socket helper are unchanged. Twenty additional cases cover these
+boundaries, unrelated cancellation, ordinary connection failure and a real
+loopback connection.
+
+- Full unit suite: **622 passed, 0 failed, 0 skipped in each of four combinations**
+  (net8/net8, net10/net10, net8/Standard, net10/Standard).
+- Provider-method E2E: **156 passed, 0 failed, 0 skipped in each of five combinations**
+  (net10/net10, net6/Standard, net8/net8, net10/Standard, net8/Standard).
+- The prepared NuGet consumers on .NET 6/8/10 passed asset selection, Native/Triple
+  round trips and stalled-body deadlines. Framework 4.8 cross-compilation passed;
+  Framework runtime execution still requires Windows CI.
+- Standard and modern assets retain the same **61 exported types / 1041
+  public/protected declarations**, with no public API differences.
+
+These are local results; the updated commit must also pass its GitHub checks.

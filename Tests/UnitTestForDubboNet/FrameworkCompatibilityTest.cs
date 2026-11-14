@@ -79,6 +79,55 @@ public class FrameworkCompatibilityTest
         Assert.Equal(expected, StringCompatibility.SplitTrimmed(value, ":", count));
     }
 
+    [Theory]
+    [InlineData(" abc ", "", 2, new[] { "abc" })]
+    [InlineData("a:b::c", "", 2, new[] { "a:b::c" })]
+    [InlineData(" \t\r\n ", "", 2, new string[] { })]
+    [InlineData("", "", 2, new string[] { })]
+    [InlineData(" abc ", "", 0, new string[] { })]
+    [InlineData(" abc ", "", 1, new[] { "abc" })]
+    [InlineData(" abc ", null, 2, new[] { "abc" })]
+    [InlineData(" \t\r\n ", null, 2, new string[] { })]
+    [InlineData(" abc ", null, 0, new string[] { })]
+    [InlineData(" abc ", null, 1, new[] { "abc" })]
+    public async Task TrimmedSplitWithEmptyOrNullSeparatorTerminatesAndMatchesBcl(
+        string value, string? separator, int count, string[] expected)
+    {
+        Assert.Equal(expected, value.Split(new[] { separator! }, count,
+            StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+        // Bound this regression check: a zero-length separator must not spin
+        // indefinitely and hang the entire test run if the guard is removed.
+        string[] actual = await Task.Run(() =>
+            StringCompatibility.SplitTrimmed(value, separator!, count)).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public void TrimmedSplitValidatesCountBeforeEmptySeparatorFastPath(string? separator)
+    {
+        var expected = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            "abc".Split(new[] { separator! }, -1,
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+        var actual = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            StringCompatibility.SplitTrimmed("abc", separator!, -1));
+        Assert.Equal(expected.ParamName, actual.ParamName);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void TrimmedSplitPreservesNullReceiverBehavior(int count)
+    {
+        string value = null!;
+        Assert.Throws<NullReferenceException>(() => value.Split(new[] { "" }, count,
+            StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+        Assert.Throws<NullReferenceException>(() => StringCompatibility.SplitTrimmed(value, "", count));
+    }
+
     [Fact]
     public void StatusKeyValueParserSkipsEmptyEntriesBeforePreservingTheValueRemainder()
     {

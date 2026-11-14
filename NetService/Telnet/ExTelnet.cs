@@ -111,6 +111,8 @@ namespace NetService.Telnet
         //private ArrayList optionsList = new ArrayList();
 
         private Socket mySocket;
+        private readonly Func<Socket, EndPoint, CancellationToken, Task> _connectSocketAsync =
+            NetworkCompatibility.ConnectOwnedAsync;
         //private AsyncCallback recieveData;
 
         private IPEndPoint iep;
@@ -336,6 +338,14 @@ namespace NetService.Telnet
             //recieveData = new AsyncCallback(OnRecievedData);
         }
 
+        // Internal test seam for deterministic connection-deadline tests; the
+        // public constructors always use the owned-socket compatibility helper.
+        internal ExTelnet(IPEndPoint endpoint, Func<Socket, EndPoint, CancellationToken, Task> connect)
+            : this(endpoint)
+        {
+            _connectSocketAsync = connect ?? throw new ArgumentNullException(nameof(connect));
+        }
+
         //public ExTelnet(IPEndPoint yourEp) : this(yourEp, 50000) { }
 
         /// <summary>
@@ -516,7 +526,17 @@ namespace NetService.Telnet
                     CancellationToken ct = tokenSource.Token;
                     // Only the new connection attempt is owned here. The Standard
                     // fallback aborts it on timeout and releases its timer/registration.
-                    await NetworkCompatibility.ConnectOwnedAsync(mySocket, iep, ct);
+                    try
+                    {
+                        await _connectSocketAsync(mySocket, iep, ct);
+                    }
+                    catch (OperationCanceledException ex) when (tokenSource.IsCancellationRequested)
+                    {
+                        // This token represents ONLY the Telnet connection deadline.
+                        // Retain the original duration-bearing diagnostics without
+                        // relabeling cancellation in other users of the shared helper.
+                        throw new TimeoutException($"Connect timed out for specify time : {connectTimeOut}ms", ex);
+                    }
                 }
                 else
                 {

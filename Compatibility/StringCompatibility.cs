@@ -37,13 +37,24 @@ namespace DubboNet.Compatibility
         internal static string[] SplitTrimmed(string value, string separator, int count = int.MaxValue)
         {
 #if NETSTANDARD2_0
+            // Preserve instance String.Split's null-receiver behavior, including
+            // count == 0, before applying argument validation or fast paths.
+            int valueLength = value.Length;
             // Standard lacks TrimEntries. Trim BEFORE testing emptiness and don't
             // consume the result limit for blank entries; preserve the final remainder.
             if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
             if (count == 0) return Array.Empty<string>();
+            // The BCL string[] overload ignores empty/null separator entries.
+            // With one such entry it returns the trimmed whole value, not a
+            // whitespace split. A zero-length separator must never enter the loop.
+            if (string.IsNullOrEmpty(separator))
+            {
+                string whole = value.Trim();
+                return whole.Length == 0 ? Array.Empty<string>() : new[] { whole };
+            }
             var parts = new List<string>();
             int start = 0;
-            while (start <= value.Length)
+            while (start <= valueLength)
             {
                 if (parts.Count == count - 1)
                 {
@@ -59,7 +70,7 @@ namespace DubboNet.Compatibility
                 // Remove blank entries even when the result limit was just reached.
                 if (parts.Count == count - 1)
                 {
-                    while (start <= value.Length)
+                    while (start <= valueLength)
                     {
                         int next = value.IndexOf(separator, start, StringComparison.Ordinal);
                         if (next < 0 || value.Substring(start, next - start).Trim().Length != 0) break;
