@@ -97,7 +97,7 @@ namespace DubboNet.Registry
             Enabled = true,
             Healthy = true,
             Weight = 1,
-            Metadata = new Dictionary<string, string>(registration.Metadata)
+            Metadata = CollectionCompatibility.Copy(registration.Metadata)
         };
     }
 }

@@ -150,7 +150,7 @@ namespace DubboNet.DubboService.Native
             string effectiveGroup = invocation.Group ?? group;
             object[] arguments = new object[invocation.Arguments.Count];
             Dictionary<object, object> normalizedReferences =
-                new Dictionary<object, object>(ReferenceEqualityComparer.Instance);
+                new Dictionary<object, object>(ReferenceIdentityComparer.Instance);
             for (int i = 0; i < arguments.Length; i++)
             {
                 object prepared = PrepareArgument(
@@ -735,7 +735,7 @@ namespace DubboNet.DubboService.Native
         {
             return ToJsonCompatible(
                 value,
-                new HashSet<object>(ReferenceEqualityComparer.Instance),
+                new HashSet<object>(ReferenceIdentityComparer.Instance),
                 budget ?? new NormalizationBudget());
         }
 

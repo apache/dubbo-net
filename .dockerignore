@@ -27,6 +27,8 @@
 **/*.dbmdl
 **/*.jfm
 **/bin
+# Keep the prepared NuGet feed/cache out of integration-container build contexts.
+**/artifacts
 **/charts
 **/docker-compose*
 **/compose*

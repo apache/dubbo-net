@@ -19,7 +19,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
-using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -117,9 +116,28 @@ namespace NetService.Telnet
         public static void  SetSocketKeepAliveOption(this Socket socket, int KeepAliveTime =20, int KeepAliveInterval = 5 ,int retryTime = 3)
         {
             socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+#if NETSTANDARD2_0
+            // These managed enum members are not in the Standard contract. Use
+            // their runtime names (not OS-specific numeric constants) when available.
+            if (Enum.TryParse("TcpKeepAliveInterval", out SocketOptionName interval) &&
+                Enum.TryParse("TcpKeepAliveTime", out SocketOptionName time) &&
+                Enum.TryParse("TcpKeepAliveRetryCount", out SocketOptionName count))
+            {
+                socket.SetSocketOption(SocketOptionLevel.Tcp, interval, KeepAliveInterval);
+                socket.SetSocketOption(SocketOptionLevel.Tcp, time, KeepAliveTime);
+                socket.SetSocketOption(SocketOptionLevel.Tcp, count, retryTime);
+            }
+            else
+            {
+                // Legacy platforms still have TCP keepalive, but control its timing
+                // at OS level. Never set undocumented native socket-option numbers.
+                MyCommonHelper.MyLogger.LogWarning("This runtime cannot configure TCP keepalive timing/retries; OS defaults apply.");
+            }
+#else
             socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, KeepAliveInterval);
             socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, KeepAliveTime);
             socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, retryTime);
+#endif
         }
 
     }

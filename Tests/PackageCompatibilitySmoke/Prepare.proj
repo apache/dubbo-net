@@ -1,0 +1,56 @@
+<!--
+Licensed to the Apache Software Foundation (ASF) under one or more
+contributor license agreements. See the NOTICE file distributed with
+this work for additional information regarding copyright ownership.
+The ASF licenses this file to You under the Apache License, Version 2.0
+(the "License"); you may not use this file except in compliance with
+the License. You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<Project DefaultTargets="Prepare">
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <_RepositoryRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..'))</_RepositoryRoot>
+    <_CoreProject>$(_RepositoryRoot)DubboNet.csproj</_CoreProject>
+    <_FeedDirectory>$(_RepositoryRoot)artifacts/compatibility/</_FeedDirectory>
+    <_StateFile>$(_FeedDirectory)PackageVersion.props</_StateFile>
+    <_ConsumerProject>$(MSBuildThisFileDirectory)PackageCompatibilitySmoke.csproj</_ConsumerProject>
+  </PropertyGroup>
+
+  <!-- Explicit preparation, never an implicit build inside NuGet restore:
+       solution restore may already be restoring the same core project in parallel. -->
+  <Target Name="Prepare">
+    <Error Condition="'$(DubboNetTestTargetFramework)' != ''"
+           Text="Prepare the complete compatibility package without DubboNetTestTargetFramework." />
+    <XmlPeek XmlInputPath="$(_CoreProject)" Query="/Project/PropertyGroup/Version/text()">
+      <Output TaskParameter="Result" PropertyName="_CoreVersion" />
+    </XmlPeek>
+    <Error Condition="'$(_CoreVersion)' == ''" Text="Cannot read the core package version." />
+    <PropertyGroup>
+      <!-- A new exact identity per preparation avoids NuGet's immutable-version
+           cache reusing an earlier DLL. Do not purge a developer's global cache. -->
+      <_Nonce>$([System.Guid]::NewGuid().ToString('N').Substring(0, 12))</_Nonce>
+      <_ValidationVersion>$(_CoreVersion)-compat-validation.$([System.DateTime]::UtcNow.ToString('yyyyMMddHHmmss')).g$(_Nonce)</_ValidationVersion>
+    </PropertyGroup>
+    <!-- dotnet pack performs its own correctly ordered restore/build/pack. -->
+    <Exec WorkingDirectory="$(_RepositoryRoot)"
+          Command="dotnet pack &quot;$(_CoreProject)&quot; -c &quot;$(Configuration)&quot; -p:GeneratePackageOnBuild=false -p:PackageVersion=$(_ValidationVersion) -o &quot;$(_FeedDirectory)&quot; --nologo" />
+    <Error Condition="!Exists('$(_FeedDirectory)DubboNet.$(_ValidationVersion).nupkg')"
+           Text="The validation package was not produced." />
+    <WriteLinesToFile File="$(_StateFile)"
+                      Lines="&lt;Project&gt;&lt;PropertyGroup&gt;&lt;DubboNetPackageVersion&gt;$(_ValidationVersion)&lt;/DubboNetPackageVersion&gt;&lt;/PropertyGroup&gt;&lt;/Project&gt;"
+                      Overwrite="true" Encoding="UTF-8" />
+    <!-- Restore with the same project-local settings used by VS Code and solution
+         restore. No command-line source override or global NuGet configuration is needed. -->
+    <Exec WorkingDirectory="$(_RepositoryRoot)"
+          Command="dotnet restore &quot;$(_ConsumerProject)&quot; -warnaserror:NU1901,NU1902,NU1903,NU1904 --nologo" />
+    <Message Importance="high" Text="Prepared $(_ValidationVersion). Ordinary solution/IDE restore can now use this package." />
+  </Target>
+</Project>

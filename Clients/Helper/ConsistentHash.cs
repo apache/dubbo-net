@@ -100,7 +100,7 @@ namespace DubboNet.Clients.Helper
         /// <summary>获取 key 对应的节点。EN: Resolves the node owning a key.</summary>
         public T GetNode(string key)
         {
-            ArgumentNullException.ThrowIfNull(key);
+            Guard.ThrowIfNull(key, nameof(key));
             Ring ring = Volatile.Read(ref _ring);
             if (ring.Keys.Length == 0) throw new InvalidOperationException("The consistent hash ring is empty.");
             int index = Array.BinarySearch(ring.Keys, GetNodeHash(key));
@@ -117,7 +117,7 @@ namespace DubboNet.Clients.Helper
 
         public static int BetterHash(string key)
         {
-            ArgumentNullException.ThrowIfNull(key);
+            Guard.ThrowIfNull(key, nameof(key));
             return unchecked((int)MyCommonHelper.EncryptionHelper.MyHash.GetMurmurHash2(Encoding.UTF8.GetBytes(key)));
         }
     }

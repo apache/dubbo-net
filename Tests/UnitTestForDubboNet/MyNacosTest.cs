@@ -143,13 +143,42 @@ public class MyNacosTest
         using var discovery = new ProviderDiscovery(null!, nacos, Group, null!,
             _ => Task.CompletedTask, () => { });
 
+        // Force all callers through GetOrAdd while the first SDK factory is held.
+        // The former eager factory would start multiple SDK reads before storing a task.
+        using var ready = new CountdownEvent(32);
+        using var entering = new CountdownEvent(32);
+        using var start = new ManualResetEventSlim();
+        using var releaseSdkRead = new ManualResetEventSlim();
+        server.BeforeInstanceRead = () =>
+            Assert.True(releaseSdkRead.Wait(TimeSpan.FromSeconds(10)));
         Task<DubboServiceEndPointInfos>[] callers = Enumerable.Range(0, 32)
-            .Select(_ => discovery.GetProviderEndPointsAsync(Service)).ToArray();
-        await server.InstanceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(1, server.InstanceReads);
-        server.InstanceGate.SetResult(server.Instances[Assert.Single(server.Services)]);
+            .Select(_ => Task.Factory.StartNew(() =>
+            {
+                ready.Signal();
+                Assert.True(start.Wait(TimeSpan.FromSeconds(10)));
+                entering.Signal();
+                return discovery.GetProviderEndPointsAsync(Service);
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap())
+            .ToArray();
+        try
+        {
+            Assert.True(ready.Wait(TimeSpan.FromSeconds(10)));
+            start.Set();
+            await server.InstanceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(entering.Wait(TimeSpan.FromSeconds(10)));
+            // The SDK call is held while every worker enters the discovery method.
+            await Task.Delay(250);
+            Assert.Equal(1, Volatile.Read(ref server.InstanceReads));
+        }
+        finally
+        {
+            start.Set();
+            releaseSdkRead.Set();
+            server.InstanceGate.SetResult(server.Instances[Assert.Single(server.Services)]);
+        }
         Assert.All(await Task.WhenAll(callers), result => Assert.Single(result.EndPoints));
         Assert.Equal(1, server.InstanceReads);
+        server.BeforeInstanceRead = null;
 
         Assert.Single((await discovery.GetProviderEndPointsAsync(Service)).EndPoints);
         Assert.Equal(2, server.InstanceReads);
@@ -614,6 +643,7 @@ public class MyNacosTest
         public int CatalogReads, NamingSubscribes, ConfigReads, ConfigRemoves;
         public int InstanceReads;
         public TaskCompletionSource<List<Instance>>? InstanceGate;
+        public Action? BeforeInstanceRead;
         public TaskCompletionSource InstanceReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public MyNacos CreateClient(
@@ -672,6 +702,7 @@ public class MyNacosTest
             QueriedGroups.Add(group);
             Interlocked.Increment(ref InstanceReads);
             InstanceReadStarted.TrySetResult();
+            BeforeInstanceRead?.Invoke();
             return InstanceGate?.Task ?? Task.FromResult(Instances.GetValueOrDefault(name) ?? new List<Instance>());
         }
         private Task<ListView<string>> Catalog(string group)

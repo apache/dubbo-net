@@ -11,7 +11,7 @@ Java/Maven are test-only tools, not dependencies of the client NuGet package.
 
 ## Requirements and isolation
 
-Use a Linux host with Bash, Docker Engine and Compose v2, JDK 8, Maven, the .NET 10 SDK,
+Use a Linux host with Bash, Docker Engine and Compose v2, JDK 8, Maven, the .NET 10 SDK and .NET 6/8/10 runtimes,
 GNU coreutils (`timeout`), and iproute2 (`ip`). Normal dependency and public image downloads
 require internet access; no external Dubbo test server is contacted.
 
@@ -38,6 +38,19 @@ Dubbo 3.3.6 also exposes Triple Java Interface Unary HTTP/JSON on port `50051`.
 The registries require host ports `2181`, `8848`, `9848`, and `9849`.
 Each CI job has its own runner and Compose project. Fixed ports mean local runs must not
 overlap on the same machine or conflict with existing registries/Providers.
+
+The full xUnit suite runs sequentially on .NET 10, .NET 6, then .NET 8. The modern
+hosts load their matching native library assets; .NET 6 automatically selects
+`netstandard2.0`. CI additionally repeats the .NET 10/8 runs against the forced
+Standard DLL, and repeats integration/examples for that asset. Every runtime has
+separate logs and TRX results. Each network entry point checks the actual loaded
+library target before contacting a registry. Runtime roll-forward is limited to
+patches: missing .NET 6 cannot silently turn its check into a .NET 8/10 run.
+.NET 6 is an older-consumer compatibility check, not a recommendation to deploy
+new applications on that out-of-support runtime; no core `net6.0` asset is added.
+CI also executes the prepared real NuGet consumer on .NET 6, checking package
+asset/dependency selection, loopback Native/Triple calls and stalled-body deadlines.
+See [framework validation](../../Docs/FrameworkCompatibility.md) for commands.
 
 The workflow performs all of the following, without silently omitting versions:
 
@@ -107,6 +120,9 @@ export DUBBONET_E2E_NACOS_ADDRESS=nacos://127.0.0.1:8848
 
 dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
   -p:GeneratePackageOnBuild=false --logger "console;verbosity=detailed"
+# To run just the older consumer (the same full 156-case suite):
+dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
+  -f net6.0 -p:GeneratePackageOnBuild=false
 
 dotnet run --project Tests/DubboClientIntegrationTests/DubboClientIntegrationTests.csproj \
   -p:GeneratePackageOnBuild=false \

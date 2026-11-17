@@ -1,0 +1,10 @@
+<Project>
+  <!-- Separate restore/build state for forced library assets. This property is
+       passed to project references as well, keeping the NuGet graph consistent. -->
+  <PropertyGroup Condition="'$(DubboNetTestTargetFramework)' != ''">
+    <BaseIntermediateOutputPath>obj/$(DubboNetTestTargetFramework)/</BaseIntermediateOutputPath>
+    <BaseOutputPath>bin/$(DubboNetTestTargetFramework)/</BaseOutputPath>
+    <!-- Exclude every other mode's generated source, not only the active obj path. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

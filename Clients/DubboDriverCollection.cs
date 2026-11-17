@@ -155,8 +155,14 @@ namespace DubboNet.Clients
                 while (_innerDubboDriverCollectionConf.MaintainServiceNum > 0 && _dubboServiceDriverCollection.Count > _innerDubboDriverCollectionConf.MaintainServiceNum)
                 {
                     //移除最不活跃的服务
-                    var inactivityItem = _dubboServiceDriverCollection.MinBy<KeyValuePair<string, DubboServiceDriver>,long>(it=>it.Value.LastActivateTime.Ticks);
-                    DubboServiceDriver inactivityServiceDriver = inactivityItem.Value;
+                    // MinBy is unavailable in Standard 2.0. A single scan also tolerates
+                    // another caller emptying the concurrent collection during eviction.
+                    DubboServiceDriver inactivityServiceDriver = null;
+                    foreach (DubboServiceDriver candidate in _dubboServiceDriverCollection.Values)
+                        if (inactivityServiceDriver == null ||
+                            candidate.LastActivateTime < inactivityServiceDriver.LastActivateTime)
+                            inactivityServiceDriver = candidate;
+                    if (inactivityServiceDriver == null) break;
                     if (inactivityServiceDriver != null)
                     {
                         ReMoveDubboServiceDriver(inactivityServiceDriver.ServiceName);
@@ -184,7 +190,7 @@ namespace DubboNet.Clients
             if (_dubboServiceDriverCollection.ContainsKey(serviceName))
             {
                 DubboServiceDriver removedServiceDriver;
-                _dubboServiceDriverCollection.Remove(serviceName, out removedServiceDriver);
+                _dubboServiceDriverCollection.TryRemove(serviceName, out removedServiceDriver);
                 if (removedServiceDriver != null)
                 {
                     //DubboServiceDriver Disposes时会维护_sourceDubboActuatorSuiteCollection

@@ -1294,8 +1294,9 @@ namespace DubboNet.Metadata
         private static string EscapeJsonPointerSegment(string value)
         {
             return value
-                .Replace("~", "~0", StringComparison.Ordinal)
-                .Replace("/", "~1", StringComparison.Ordinal);
+                // Two-argument Replace is ordinal too, and is available in Standard 2.0.
+                .Replace("~", "~0")
+                .Replace("/", "~1");
         }
 
         private static string BuildFailureReason(

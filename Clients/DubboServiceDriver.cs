@@ -103,13 +103,13 @@ namespace DubboNet.Clients
             DubboServiceDriverConf dubboServiceDriverConf = null, Func<double> clock = null,
             Func<long, long> random = null, Func<DubboServiceEndPointInfo, IDubboActuatorSuite> factory = null)
         {
-            ArgumentNullException.ThrowIfNull(dbEpList);
-            ArgumentNullException.ThrowIfNull(dubboActuatorSuiteCollection);
+            Guard.ThrowIfNull(dbEpList, nameof(dbEpList));
+            Guard.ThrowIfNull(dubboActuatorSuiteCollection, nameof(dubboActuatorSuiteCollection));
             ServiceName = serviceName;
             _shared = dubboActuatorSuiteCollection;
             _configuration = dubboServiceDriverConf ?? new DubboServiceDriverConf();
             _clock = clock ?? RequestLoadStatistics.MonotonicMilliseconds;
-            _random = random ?? Random.Shared.NextInt64;
+            _random = random ?? RuntimeCompatibility.NextInt64;
             _factory = factory ?? CreateSuite;
             _lastActivateTicks = DateTime.Now.Ticks;
             try { UpdateActuatorSuiteEndPoints(dbEpList); }
@@ -141,7 +141,7 @@ namespace DubboNet.Clients
 
         public int UpdateActuatorSuiteEndPoints(List<DubboServiceEndPointInfo> dbEpList)
         {
-            ArgumentNullException.ThrowIfNull(dbEpList);
+            Guard.ThrowIfNull(dbEpList, nameof(dbEpList));
             if (dbEpList.Any(item => item?.EndPoint == null))
                 throw new ArgumentException("Provider snapshots must contain non-null endpoints.", nameof(dbEpList));
             var retired = new List<IDubboActuatorSuite>();
@@ -274,11 +274,11 @@ namespace DubboNet.Clients
                     foreach (var provider in providers)
                     {
                         long current = state.For(provider).CurrentWeight += provider.Weight;
-                        provider.NowDispatchWeight = (int)Math.Clamp(current, int.MinValue, int.MaxValue);
+                        provider.NowDispatchWeight = RuntimeCompatibility.ClampToInt(current);
                         if (current > maximum) { maximum = current; best = provider; }
                     }
                     long remaining = state.For(best).CurrentWeight -= set.TotalWeight;
-                    best.NowDispatchWeight = (int)Math.Clamp(remaining, int.MinValue, int.MaxValue);
+                    best.NowDispatchWeight = RuntimeCompatibility.ClampToInt(remaining);
                     return best;
                 case LoadBalanceMode.LeastActive:
                     return LeastActive(providers, method ?? Method(invocation));

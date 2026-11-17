@@ -91,6 +91,15 @@ namespace DubboNet.DubboService.Native.Hessian2
             return span;
         }
 
+        // Stream.Write(ReadOnlySpan) is not in Standard 2.0. Copy directly from
+        // the bounded backing array without allocating one array per Hessian chunk.
+        internal void CopyTo(Stream destination, int count)
+        {
+            EnsureAvailable(count);
+            destination.Write(_buffer, _position, count);
+            _position += count;
+        }
+
         private void EnsureAvailable(int count)
         {
             if (count < 0 || _position > _buffer.Length - count)

@@ -124,27 +124,32 @@ namespace DubboNet.Registry
             return !string.IsNullOrWhiteSpace(serviceName);
         }
 
+        private void ThrowIfDisposed()
+        {
+            if (IsDisposed) throw new ObjectDisposedException(nameof(ProviderDiscovery));
+        }
+
         internal async Task<DubboServiceEndPointInfos> GetProviderEndPointsAsync(string serviceName, bool isFullPath = false)
         {
-            ObjectDisposedException.ThrowIf(IsDisposed, this);
+            ThrowIfDisposed();
             // A Lazy prevents losing GetOrAdd factories from starting duplicate SDK
             // queries or installing duplicate subscriptions under concurrent calls.
             (string Service, bool FullPath) key = (serviceName, isFullPath);
             Lazy<Task<DubboServiceEndPointInfos>> pending = _inFlight.GetOrAdd(key,
-                static (request, owner) => new Lazy<Task<DubboServiceEndPointInfos>>(
-                    () => owner.DiscoverAsync(request.Service, request.FullPath),
-                    LazyThreadSafetyMode.ExecutionAndPublication), this);
+                request => new Lazy<Task<DubboServiceEndPointInfos>>(
+                    () => DiscoverAsync(request.Service, request.FullPath),
+                    LazyThreadSafetyMode.ExecutionAndPublication));
             try
             {
                 DubboServiceEndPointInfos result = await pending.Value.ConfigureAwait(false);
                 // An SDK lookup may outlive disposal. Never publish its snapshot after
                 // the subscription that would keep it current has been removed.
-                ObjectDisposedException.ThrowIf(IsDisposed, this);
+                ThrowIfDisposed();
                 return result;
             }
             finally
             {
-                _inFlight.TryRemove(
+                _inFlight.RemoveExact(
                     new KeyValuePair<(string Service, bool FullPath), Lazy<Task<DubboServiceEndPointInfos>>>(key, pending));
             }
         }

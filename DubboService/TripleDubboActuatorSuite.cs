@@ -246,10 +246,9 @@ namespace DubboNet.DubboService
                 cancellationToken.ThrowIfCancellationRequested();
                 using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, requestPath)
                 {
-                    Version = HttpVersion.Version11,
-                    VersionPolicy = HttpVersionPolicy.RequestVersionExact,
                     Content = new StringContent(requestBody, Encoding.UTF8, "application/json")
                 };
+                HttpCompatibility.SetHttp11Exact(request);
 
                 AddHeader(request, ServiceVersionHeader, version);
                 AddHeader(request, ServiceGroupHeader, group);
@@ -260,8 +259,8 @@ namespace DubboNet.DubboService
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     timeout.Token).ConfigureAwait(false);
-                string responseBody = await response.Content
-                    .ReadAsStringAsync(timeout.Token)
+                string responseBody = await HttpCompatibility
+                    .ReadAsStringAsync(response, timeout.Token)
                     .ConfigureAwait(false);
 
                 stopwatch.Stop();
@@ -398,13 +397,11 @@ namespace DubboNet.DubboService
                 configuration ?? new DubboActuatorSuiteConf();
             Uri baseAddress = new UriBuilder(Uri.UriSchemeHttp, address, port).Uri;
             int maxConnections = Math.Max(1, effectiveConfiguration.MaxConnections);
-            SocketsHttpHandler handler = new SocketsHttpHandler
-            {
-                MaxConnectionsPerServer = maxConnections,
-                PooledConnectionIdleTimeout = effectiveConfiguration.MasterConnectionAliveTime > 0
+            HttpMessageHandler handler = HttpCompatibility.CreateHandler(
+                maxConnections,
+                effectiveConfiguration.MasterConnectionAliveTime > 0
                     ? TimeSpan.FromSeconds(effectiveConfiguration.MasterConnectionAliveTime)
-                    : Timeout.InfiniteTimeSpan
-            };
+                    : Timeout.InfiniteTimeSpan);
 
             HttpClient client = new HttpClient(handler)
             {

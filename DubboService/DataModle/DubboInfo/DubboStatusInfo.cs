@@ -82,10 +82,10 @@ namespace DubboNet.DubboService.DataModle.DubboInfo
                 {
                     throw new ArgumentException($"“{nameof(message)}”can not be null 。", nameof(message));
                 }
-                string[] parts = message.Split(MES_SPLIT, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                string[] parts = StringCompatibility.SplitTrimmed(message, MES_SPLIT);
                 foreach (string part in parts)
                 {
-                    var keyValue = part.Trim().Split(MESVAL_SPLIT, 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var keyValue = StringCompatibility.SplitTrimmed(part.Trim(), MESVAL_SPLIT, 2);
                     if (keyValue.Length != 2)
                     {
                         MyLogger.LogWarning("Each part of the status text should contain a single ':' character.");

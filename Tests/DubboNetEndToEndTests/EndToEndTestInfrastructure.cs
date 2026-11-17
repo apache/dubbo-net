@@ -59,6 +59,8 @@ public sealed class EndToEndClientPool : IDisposable
 {
     private readonly ConcurrentDictionary<string, DubboClient> _clients = new();
 
+    public EndToEndClientPool() => DubboNet.Testing.LibraryAssetVerification.Verify();
+
     public DubboClient GetClient(string registryKind, string rootPath)
     {
         string registryAddress = EndToEndTestCatalog.GetRegistryAddress(registryKind);

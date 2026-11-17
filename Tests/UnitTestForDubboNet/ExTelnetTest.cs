@@ -17,6 +17,8 @@
 
 using NetService.Telnet;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 
@@ -24,6 +26,78 @@ namespace UnitTestForDubboNet
 {
     public class ExTelnetTest
     {
+        [Fact]
+        public async Task ConnectionDeadlineStillAllowsSuccessfulLoopbackConnection()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            try
+            {
+                using ExTelnet telnet = new ExTelnet((IPEndPoint)listener.LocalEndpoint);
+                Task<TcpClient> accept = listener.AcceptTcpClientAsync();
+
+                Assert.True(await telnet.ConnectAsync(connectTimeOut: 5000)
+                    .WaitAsync(TimeSpan.FromSeconds(10)));
+                using TcpClient peer = await accept.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.True(telnet.IsConnected);
+                Assert.Null(telnet.NowErrorMes);
+            }
+            finally
+            {
+                listener.Stop();
+            }
+        }
+
+        [Fact]
+        public async Task ConnectionDeadlineRetainsDurationInErrorAndStateReport()
+        {
+            Socket? attemptedSocket = null;
+            CancellationToken deadlineToken = default;
+            var messages = new List<string>();
+            using ExTelnet telnet = new ExTelnet(new IPEndPoint(IPAddress.Loopback, 23),
+                async (socket, endpoint, token) =>
+                {
+                    attemptedSocket = socket;
+                    deadlineToken = token;
+                    await Task.Delay(Timeout.Infinite, token);
+                });
+            telnet.OnMesageReport += (message, _) => messages.Add(message);
+
+            bool connected = await telnet.ConnectAsync(connectTimeOut: 25).WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.False(connected);
+            Assert.True(deadlineToken.IsCancellationRequested);
+            Assert.Equal("Connect timed out for specify time : 25ms", telnet.NowErrorMes);
+            Assert.Contains("Connect fail : " + telnet.NowErrorMes, messages);
+            Assert.False(telnet.IsConnected);
+            Assert.NotNull(attemptedSocket);
+            // A failed, unpublished socket is still owned by this Telnet instance.
+            telnet.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => attemptedSocket!.Poll(0, SelectMode.SelectRead));
+        }
+
+        [Fact]
+        public async Task UnrelatedCancellationIsNotRelabeledAsConnectionTimeout()
+        {
+            using ExTelnet telnet = new ExTelnet(new IPEndPoint(IPAddress.Loopback, 23),
+                (_, _, _) => throw new OperationCanceledException("unrelated cancellation"));
+
+            Assert.False(await telnet.ConnectAsync(connectTimeOut: 60_000));
+            Assert.Equal("unrelated cancellation", telnet.NowErrorMes);
+            Assert.False(telnet.IsConnected);
+        }
+
+        [Fact]
+        public async Task OrdinaryConnectionFailureKeepsItsOwnDiagnostics()
+        {
+            using ExTelnet telnet = new ExTelnet(new IPEndPoint(IPAddress.Loopback, 23),
+                (_, _, _) => throw new IOException("connection failed before deadline"));
+
+            Assert.False(await telnet.ConnectAsync(connectTimeOut: 60_000));
+            Assert.Equal("connection failed before deadline", telnet.NowErrorMes);
+            Assert.False(telnet.IsConnected);
+        }
+
         [Fact]
         public async Task FindPositionReturnsTheActualMatchPosition()
         {

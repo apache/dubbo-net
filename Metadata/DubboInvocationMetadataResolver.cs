@@ -36,7 +36,7 @@ namespace DubboNet.Metadata
             IReadOnlyList<object> arguments,
             DubboInvocation source = null)
         {
-            ArgumentNullException.ThrowIfNull(metadataManager);
+            Guard.ThrowIfNull(metadataManager, nameof(metadataManager));
             if (string.IsNullOrWhiteSpace(serviceName)
                 || string.IsNullOrWhiteSpace(methodName))
             {
