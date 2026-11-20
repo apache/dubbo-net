@@ -32,7 +32,7 @@ namespace UnitTestForDubboNet
             public bool IsConnected { get; set; } = true;
             public Dictionary<string, Stat> Nodes { get; } = new();
             public List<string> ExistingPaths { get; } = new();
-            public List<string> Children { get; } = new();
+            public List<string>? Children { get; set; } = new();
             public Watcher? ReceivedWatcher { get; private set; }
             public int ChildrenReads { get; private set; }
 
@@ -47,7 +47,7 @@ namespace UnitTestForDubboNet
             {
                 ChildrenReads++;
                 ReceivedWatcher = watcher;
-                return Task.FromResult<IReadOnlyList<string>>(Children);
+                return Task.FromResult<IReadOnlyList<string>>(Children!);
             }
         }
 
@@ -86,7 +86,7 @@ namespace UnitTestForDubboNet
         {
             var zooKeeper = new FakeProviderZooKeeper();
             zooKeeper.Nodes["/apps/com.foo.Service/providers"] = NodeWithChildren(1);
-            zooKeeper.Children.Add(Uri.EscapeDataString(
+            zooKeeper.Children!.Add(Uri.EscapeDataString(
                 "dubbo://127.0.0.1:20880/com.foo.Service?application=demo"));
             var watcher = new DubboClientZookeeperWatcher(null!);
             int recoveries = 0;
@@ -99,6 +99,23 @@ namespace UnitTestForDubboNet
             Assert.Single(result.EndPoints);
             Assert.Equal("127.0.0.1:20880", result.EndPoints[0].EndPoint.ToString());
             Assert.Same(watcher, zooKeeper.ReceivedWatcher);
+            Assert.Equal(1, zooKeeper.ChildrenReads);
+            Assert.Equal(1, recoveries);
+        }
+
+        [Fact]
+        public async Task ZooKeeperDiscovery_ChildrenDisappearAfterExists_ReportsReadErrorWithoutEndpoints()
+        {
+            var zooKeeper = new FakeProviderZooKeeper { Children = null };
+            zooKeeper.Nodes["/apps/com.foo.Service/providers"] = NodeWithChildren(1);
+            int recoveries = 0;
+            using var discovery = ProviderDiscovery.ForZooKeeper(zooKeeper, "/apps/",
+                new DubboClientZookeeperWatcher(null!), () => recoveries++);
+
+            var result = await discovery.GetProviderEndPointsAsync("com.foo.Service");
+
+            Assert.Equal("GetChildrenAsync error [com.foo.Service]", result.ErrorInfo);
+            Assert.Empty(result.EndPoints);
             Assert.Equal(1, zooKeeper.ChildrenReads);
             Assert.Equal(1, recoveries);
         }
