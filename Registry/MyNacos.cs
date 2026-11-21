@@ -40,6 +40,7 @@ using System.Web;
 
 namespace DubboNet.Clients.RegistryClient
 {
+    // Registry owns this file; retain the public namespace for API compatibility (#36).
     /// <summary>
     /// 封装 DubboNet 使用的 Nacos Naming 与 Config 操作，包括服务发现、订阅和远程元数据读取。
     /// <para>EN: Wraps the Nacos Naming and Config operations used by DubboNet, including discovery, subscriptions, and remote metadata reads.</para>

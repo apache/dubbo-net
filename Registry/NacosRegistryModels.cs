@@ -21,6 +21,7 @@ using System.Collections.ObjectModel;
 
 namespace DubboNet.Clients.DataModle
 {
+    // Registry owns this file; retain the historical Clients.DataModle spelling for public API compatibility (#36).
     /// <summary>
     /// Nacos Naming 目录中的服务摘要；该类型不依赖 Nacos SDK，可由应用直接用于构建服务目录。
     /// <para>EN: Service summary from the Nacos Naming catalog. This SDK-independent type can be used directly by applications to build a service tree.</para>
