@@ -143,10 +143,11 @@ public class MyNacosTest
         using var discovery = new ProviderDiscovery(null!, nacos, Group, null!,
             _ => Task.CompletedTask, () => { });
 
-        // Force all callers through GetOrAdd while the first SDK factory is held.
+        // Hold the synchronous SDK factory to expose overlapping GetOrAdd factories.
         // The former eager factory would start multiple SDK reads before storing a task.
         using var ready = new CountdownEvent(32);
         using var entering = new CountdownEvent(32);
+        using var issued = new CountdownEvent(32);
         using var start = new ManualResetEventSlim();
         using var releaseSdkRead = new ManualResetEventSlim();
         server.BeforeInstanceRead = () =>
@@ -157,7 +158,9 @@ public class MyNacosTest
                 ready.Signal();
                 Assert.True(start.Wait(TimeSpan.FromSeconds(10)));
                 entering.Signal();
-                return discovery.GetProviderEndPointsAsync(Service);
+                Task<DubboServiceEndPointInfos> lookup = discovery.GetProviderEndPointsAsync(Service);
+                issued.Signal();
+                return lookup;
             }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap())
             .ToArray();
         try
@@ -166,8 +169,11 @@ public class MyNacosTest
             start.Set();
             await server.InstanceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.True(entering.Wait(TimeSpan.FromSeconds(10)));
-            // The SDK call is held while every worker enters the discovery method.
-            await Task.Delay(250);
+            // Lazy.Value can block callers until its factory returns the SDK task.
+            // Release that synchronous gate, keeping InstanceGate incomplete until
+            // every caller has obtained its lookup task, including late workers.
+            releaseSdkRead.Set();
+            Assert.True(issued.Wait(TimeSpan.FromSeconds(10)));
             Assert.Equal(1, Volatile.Read(ref server.InstanceReads));
         }
         finally
