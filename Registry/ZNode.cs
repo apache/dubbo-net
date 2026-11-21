@@ -23,6 +23,7 @@ using System.Text;
 
 namespace DubboNet.Clients.RegistryClient
 {
+    // Registry owns this file; retain the public namespace for API compatibility (#36).
     /// <summary>
     /// 表示一个可组成树结构的 ZooKeeper 节点快照。
     /// EN: Represents a ZooKeeper node snapshot that can be organized as a tree.

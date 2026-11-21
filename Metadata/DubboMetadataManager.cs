@@ -16,7 +16,6 @@
  */
 
 using DubboNet.Clients.DataModle;
-using DubboNet.Clients.Metadata;
 using DubboNet.Clients.RegistryClient;
 using MyCommonHelper;
 using org.apache.zookeeper;
@@ -30,7 +29,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace DubboNet.Clients
+namespace DubboNet.Metadata
 {
     /// <summary>
     /// 解析并缓存 Dubbo 方法元数据：Dubbo 2.7.3 及以上优先元数据中心并回退一次 Telnet，旧版本直接尝试 Telnet。

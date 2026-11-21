@@ -15,15 +15,17 @@
  * limitations under the License.
  */
 
-namespace DubboNet.Clients.RegistryClient
+namespace DubboNet.Metadata
 {
     /// <summary>
-    /// Dubbo 注册中心共享的服务类别；不包含具体注册中心的路径分隔符。
-    /// <para>EN: Shared Dubbo registry categories without registry-specific path separators.</para>
+    /// Metadata 默认值与 Nacos Naming、ZooKeeper 注册目录默认值分别管理。
+    /// <para>EN: Metadata defaults are independent of Nacos Naming and ZooKeeper registry defaults.</para>
     /// </summary>
-    internal static class RegistryCategories
+    internal static class DubboMetadataDefaults
     {
-        internal const string Providers = "providers";
-        internal const string Consumers = "consumers";
+        internal const string NacosGroup = "dubbo";
+        // Metadata hangs under the ZooKeeper registry root, including when Naming uses Nacos.
+        // Keep this independently owned default in sync with ZooKeeperRegistryPaths.DefaultRoot.
+        internal const string ZooKeeperRootPath = "/dubbo";
     }
 }

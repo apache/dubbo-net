@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+using DubboNet.Registry;
 using MyCommonHelper;
 using org.apache.zookeeper;
 using org.apache.zookeeper.data;
@@ -28,6 +29,7 @@ using System.Threading.Tasks;
 
 namespace DubboNet.Clients.RegistryClient
 {
+    // Registry owns this file; retain the public namespace for API compatibility (#36).
     /// <summary>
     /// 管理可自动重连、支持认证并可异步释放的 ZooKeeper 会话。
     /// <para>EN: Manages an authenticated ZooKeeper session with automatic reconnection and asynchronous disposal.</para>

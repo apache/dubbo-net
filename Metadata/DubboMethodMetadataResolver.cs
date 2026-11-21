@@ -22,7 +22,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 
-namespace DubboNet.Clients
+namespace DubboNet.Metadata
 {
     /// <summary>
     /// 根据实参数量和 CLR/JSON 值兼容性，从元数据中选择唯一的 Java 方法重载。

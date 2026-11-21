@@ -16,6 +16,7 @@
  */
 
 using DubboNet.Clients.DataModle;
+using DubboNet.Clients.RegistryClient;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,7 +24,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace DubboNet.Clients.RegistryClient
+namespace DubboNet.Registry
 {
     internal static class ConsumerRegistrationConfiguration
     {
