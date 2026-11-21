@@ -34,7 +34,7 @@ namespace UnitTestForDubboNet
                 ["message"] = "未知错误"
             };
 
-            string json = NativeDubboCodec.SerializeJson(value);
+            string json = NativeDubboCodec.SerializeJson(value, payloadLength: 0);
 
             Assert.Equal("{\"message\":\"未知错误\"}", json);
         }

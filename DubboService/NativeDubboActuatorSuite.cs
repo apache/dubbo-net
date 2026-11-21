@@ -204,19 +204,19 @@ namespace DubboNet.DubboService
                     result.UpdateQueryFailed();
                     result.ErrorMeaasge = response.ErrorMessage
                         ?? $"Dubbo provider returned response status {response.Status}.";
-                    result.Result = NativeDubboCodec.SerializeJson(result.ErrorMeaasge);
+                    result.Result = NativeDubboCodec.SerializeJson(result.ErrorMeaasge, response.PayloadLength);
                 }
                 else if (response.Exception != null)
                 {
                     result.UpdateQueryFailed();
                     result.RawResult = response.Exception;
-                    result.Result = NativeDubboCodec.SerializeJson(response.Exception);
+                    result.Result = NativeDubboCodec.SerializeResponseJson(response);
                     result.ErrorMeaasge = NativeDubboCodec.DescribeException(response.Exception);
                 }
                 else
                 {
                     result.RawResult = response.Value;
-                    result.Result = NativeDubboCodec.SerializeJson(response.Value);
+                    result.Result = NativeDubboCodec.SerializeResponseJson(response);
                 }
             }
             catch (Exception exception)
