@@ -17,6 +17,7 @@
 
 using DubboNet.Clients;
 using DubboNet.Clients.DataModle;
+using DubboNet.Metadata;
 using DubboNet.Clients.LoadBalancing;
 using DubboNet.Clients.RegistryClient;
 using DubboNet.DubboService;

@@ -87,6 +87,7 @@
   <!-- Test friend-assembly access is also declared explicitly in the assembly source. -->
   <ItemGroup>
       <InternalsVisibleTo Include="UnitTestForDubboNet" />
+      <InternalsVisibleTo Include="DubboNetEndToEndTests" />
   </ItemGroup>
 
   <Target Name="PreventPartialCompatibilityPackage" BeforeTargets="GenerateNuspec"

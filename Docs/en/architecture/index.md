@@ -8,10 +8,10 @@ DubboNet is a consumer of remote Java Providers. The two paths below can be read
 
 ```text
 DubboClient.QueryAsync
-  ├─ Java types missing → CreateMetadataInvocationAsync → DubboMetadataManager → signature resolution
+  ├─ Java types missing → DubboInvocationMetadataResolver.CreateAsync → DubboMetadataManager → signature resolution
   └─ QueryInternalAsync → GetRequiredProtocolAsync (best-effort overload check)
        → DubboDriverCollection.GetDubboActuatorSuite(reserve: true)
-          ├─ no driver → ConcurrentGetProviderEndPoints → AddDubboServiceDriver → select again
+          ├─ no driver → DiscoverProvidersAsync → ProviderDiscovery.GetProviderEndPointsAsync → AddDubboServiceDriver → select again
           ├─ driver with no Providers → discover again; retry only if Providers appear
           ├─ candidates present but no available actuator → failure result
           └─ selected → LoadBalancedInvocation.InvokeAsync → actuator SendQuery → DubboRequestResult
@@ -35,7 +35,7 @@ Nacos: HandleNacosProviderChangedAsync ───────────┼─ e
                                                   │                     → discover → update driver/metadata cache
                                                   └─ only metadata cached → RefreshCachedMetadataAsync
 Reconnect: StartConnecTaskAsync → TryDoConnectRegistryTaskAsync → ReLoadDubboDriverCollection
-Shutdown: DubboClient.Dispose → unsubscribe/release registry references, drivers, and actuators
+Shutdown: DubboClient.Dispose → ProviderDiscovery.Dispose (remove its Naming subscriptions) → release registry references, drivers, and actuators
 ```
 
 [Registry and discovery](registry.md) covers address lookup and notifications; [Client](client.md) covers reconnect and resource release.
@@ -45,5 +45,6 @@ Shutdown: DubboClient.Dispose → unsubscribe/release registry references, drive
 | State | Owner | Not the same as |
 | --- | --- | --- |
 | Callable Provider candidates, selection, and reservation | `DubboServiceDriver` and `DubboDriverCollection` | A cache of registry lookup results |
-| Java method and type definitions | `DubboMetadataManager` | A list of callable Providers |
+| Java method and type definitions | `DubboMetadataManager` in `Metadata/` | A list of callable Providers |
+| In-flight Provider discovery and Nacos Naming subscriptions | `ProviderDiscovery` in `Registry/` | A second callable Provider snapshot |
 | Registry connection references and client actuator lifetime | `DubboClient`; the underlying connections are shared by storage | Exclusive connection ownership or an individually removable ZooKeeper watch |

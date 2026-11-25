@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-namespace DubboNet.Clients.RegistryClient
+namespace DubboNet.Registry
 {
     /// <summary>
     /// ZooKeeper 注册节点的默认根路径与目录片段；不用于 Nacos 分组或服务名。

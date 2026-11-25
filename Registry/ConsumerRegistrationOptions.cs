@@ -22,6 +22,7 @@ using System.Net.Sockets;
 
 namespace DubboNet.Clients.DataModle
 {
+    // Registry owns this file; retain the historical Clients.DataModle spelling for public API compatibility (#36).
     /// <summary>
     /// 进程级消费者注册配置；重复配置可热切换，默认关闭。
     /// EN: Process-wide consumer registration options. Reconfigure to switch at runtime; disabled by default.

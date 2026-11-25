@@ -19,6 +19,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using DubboNet.Clients.DataModle;
 using DubboNet.Clients.RegistryClient;
+using DubboNet.Registry;
 using Nacos.V2;
 using Nacos.V2.Naming.Dtos;
 

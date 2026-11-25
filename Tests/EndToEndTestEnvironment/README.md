@@ -60,6 +60,10 @@ The workflow performs all of the following, without silently omitting versions:
   expected Provider exceptions. These are logical test cases; a case may send multiple RPCs.
 - Six metadata coverage cases compare all exposed signatures against the test catalog,
   applying Java generic type erasure. Adding a Provider method requires a matching test.
+- A dedicated ZooKeeper discovery case constructs the production `ProviderDiscovery(MyZookeeper, ...)`
+  reader, reads a published Java Provider node, and checks the parsed protocol, port,
+  interface, version, and group. Offline unit coverage separately simulates a node disappearing
+  between `exists` and `getChildren`; the real-registry case does not force that race.
 - `DubboClientIntegrationTests` in ZooKeeper and Nacos modes, including metadata reads,
   directory APIs, inference, typed responses, and explicit Native/Triple direct calls.
 - `QueryDemo` in both modes, checking actual fixture values for all ten QueryAsync
@@ -120,7 +124,7 @@ export DUBBONET_E2E_NACOS_ADDRESS=nacos://127.0.0.1:8848
 
 dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
   -p:GeneratePackageOnBuild=false --logger "console;verbosity=detailed"
-# To run just the older consumer (the same full 156-case suite):
+# To run just the older consumer (the same full 157-case suite):
 dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
   -f net6.0 -p:GeneratePackageOnBuild=false
 

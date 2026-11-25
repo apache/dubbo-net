@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+using DubboNet.Clients.RegistryClient;
 using Nacos.V2.Naming.Dtos;
 using org.apache.zookeeper;
 using org.apache.zookeeper.data;
@@ -22,7 +23,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
-namespace DubboNet.Clients.RegistryClient
+namespace DubboNet.Registry
 {
     internal sealed class ZooKeeperConsumerRegistry : IConsumerRegistrationRegistry
     {

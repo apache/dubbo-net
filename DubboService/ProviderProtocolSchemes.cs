@@ -15,14 +15,15 @@
  * limitations under the License.
  */
 
-namespace DubboNet.Clients.RegistryClient
+namespace DubboNet.DubboService
 {
     /// <summary>
-    /// Nacos Naming 与 Config 的默认分组；不用于 Metadata 定义分组。
-    /// <para>EN: Default Nacos Naming and Config group, not the metadata-definition group.</para>
+    /// Provider 注册 URI 的协议 scheme，由发现与执行器选择共享；不用于 Nacos group 或消费者协议版本。
+    /// <para>EN: Provider URI schemes shared by discovery and suite selection, not registry groups or consumer versions.</para>
     /// </summary>
-    internal static class NacosRegistryDefaults
+    internal static class ProviderProtocolSchemes
     {
-        internal const string DefaultGroup = "DEFAULT_GROUP";
+        internal const string Dubbo = "dubbo";
+        internal const string Tri = "tri";
     }
 }

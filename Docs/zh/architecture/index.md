@@ -8,10 +8,10 @@ DubboNet 是调用 Java Provider 的消费端。下面是两条可分别阅读�
 
 ```text
 DubboClient.QueryAsync
-  ├─ Java 类型未给出 → CreateMetadataInvocationAsync → DubboMetadataManager → 签名解析
+  ├─ Java 类型未给出 → DubboInvocationMetadataResolver.CreateAsync → DubboMetadataManager → 签名解析
   └─ QueryInternalAsync → GetRequiredProtocolAsync（尽力检查重载约束）
        → DubboDriverCollection.GetDubboActuatorSuite(reserve: true)
-          ├─ 无 Driver → ConcurrentGetProviderEndPoints → AddDubboServiceDriver → 再次选择
+          ├─ 无 Driver → DiscoverProvidersAsync → ProviderDiscovery.GetProviderEndPointsAsync → AddDubboServiceDriver → 再次选择
           ├─ Driver 存在但 Provider 为空 → 重新发现；有节点才更新、重选
           ├─ 有候选但执行器不可用 → 返回失败结果
           └─ 已选中 → LoadBalancedInvocation.InvokeAsync → 执行器 SendQuery → DubboRequestResult
@@ -35,7 +35,7 @@ Nacos: HandleNacosProviderChangedAsync ───────────┼─ �
                                                   │                  → 发现地址 → 更新 Driver／元数据缓存
                                                   └─ 仅有元数据缓存 → RefreshCachedMetadataAsync
 断线恢复: StartConnecTaskAsync → TryDoConnectRegistryTaskAsync → ReLoadDubboDriverCollection
-关闭: DubboClient.Dispose → 取消订阅／释放连接引用、Driver 与执行器
+关闭: DubboClient.Dispose → ProviderDiscovery.Dispose（移除自身 Naming 订阅）→ 释放连接引用、Driver 与执行器
 ```
 
 [注册与发现](registry.md)说明地址查询与通知，[客户端](client.md)说明重连与资源释放。
@@ -45,5 +45,6 @@ Nacos: HandleNacosProviderChangedAsync ───────────┼─ �
 | 状态 | 持有者 | 不等于 |
 | --- | --- | --- |
 | 可调用 Provider 候选、选择与预留 | `DubboServiceDriver` 及 `DubboDriverCollection` | 注册发现的查询结果缓存 |
-| Java 方法与类型定义 | `DubboMetadataManager` | 可调用 Provider 列表 |
+| Java 方法与类型定义 | `Metadata/` 的 `DubboMetadataManager` | 可调用 Provider 列表 |
+| 在途 Provider 发现与 Nacos Naming 订阅 | `Registry/` 的 `ProviderDiscovery` | 第二份可调用 Provider 快照 |
 | 注册连接引用及客户端执行器寿命 | `DubboClient`；底层连接由共享 storage 复用 | 将连接独占或把 watcher 当成可单独退订 |

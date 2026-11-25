@@ -15,17 +15,21 @@
  * limitations under the License.
  */
 
-namespace DubboNet.Clients.Metadata
+namespace DubboNet.Metadata
 {
     /// <summary>
-    /// Metadata 默认值与 Nacos Naming、ZooKeeper 注册目录默认值分别管理。
-    /// <para>EN: Metadata defaults are independent of Nacos Naming and ZooKeeper registry defaults.</para>
+    /// FullServiceDefinition 类型字段，由 JSON 特性、读取器和写入器共享。
+    /// <para>EN: FullServiceDefinition type fields shared by JSON attributes, the reader and the writer.</para>
     /// </summary>
-    internal static class DubboMetadataDefaults
+    internal static class DubboTypeMetadataJsonFields
     {
-        internal const string NacosGroup = "dubbo";
-        // Metadata hangs under the ZooKeeper registry root, including when Naming uses Nacos.
-        // Keep this independently owned default in sync with ZooKeeperRegistryPaths.DefaultRoot.
-        internal const string ZooKeeperRootPath = "/dubbo";
+        internal const string Id = "id";
+        internal const string Type = "type";
+        internal const string Items = "items";
+        internal const string EnumValuesField = "enum";
+        internal const string Enums = "enums";
+        internal const string Reference = "$ref";
+        internal const string Properties = "properties";
+        internal const string TypeBuilderName = "typeBuilderName";
     }
 }
