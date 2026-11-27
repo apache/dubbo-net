@@ -17,6 +17,7 @@
 
 using DubboNet.Clients.RegistryClient;
 using DubboNet.Registry;
+using DubboNet.Testing;
 using org.apache.zookeeper;
 using Xunit;
 
@@ -32,7 +33,7 @@ public sealed class ZooKeeperProviderDiscoveryEndToEndTests
     {
         await using var zookeeper = new MyZookeeper(
             EndToEndTestCatalog.GetRegistryAddress(EndToEndTestCatalog.ZooKeeper));
-        using var discovery = new ProviderDiscovery(zookeeper, null!, $"/dubbo-{version}/",
+        using var discovery = new ProviderDiscovery(zookeeper, null!, EndToEndRegistryLayout.RootPath(version) + "/",
             new PassiveWatcher(), _ => Task.CompletedTask, () => { });
 
         var result = await discovery.GetProviderEndPointsAsync(EndToEndTestCatalog.EchoService);

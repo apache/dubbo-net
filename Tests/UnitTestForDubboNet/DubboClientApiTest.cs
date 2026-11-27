@@ -75,12 +75,24 @@ namespace UnitTestForDubboNet
             Assert.Equal(typeof(IReadOnlyList<object>), parameters[2].ParameterType);
         }
 
-        private static void AssertSingleArgumentOverload(
-            Expression<Func<DubboClient, Task<DubboRequestResult>>> expression)
+        [Fact]
+        public void DefaultEndpointAndNullArgumentStillBindToTheInstanceOverloads()
+        {
+            Expression<Func<DubboClient, Task<DubboRequestResult>>> call =
+                client => client.QueryAsync(null, default);
+            Expression<Func<DubboClient, Task<DubboRequestResult<string>>>> typedCall =
+                client => client.QueryAsync<string>(null, default);
+
+            AssertSingleArgumentOverload(call);
+            AssertSingleArgumentOverload(typedCall);
+        }
+
+        private static void AssertSingleArgumentOverload(LambdaExpression expression)
         {
             MethodCallExpression methodCall = Assert.IsAssignableFrom<MethodCallExpression>(expression.Body);
             ParameterInfo[] parameters = methodCall.Method.GetParameters();
             Assert.Equal(2, parameters.Length);
+            Assert.Equal(typeof(string), parameters[0].ParameterType);
             Assert.Equal(typeof(object), parameters[1].ParameterType);
         }
     }

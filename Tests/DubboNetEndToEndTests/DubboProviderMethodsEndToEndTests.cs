@@ -18,6 +18,7 @@
 using DubboNet.Clients;
 using DubboNet.Clients.DataModle;
 using DubboNet.DubboService.DataModle;
+using DubboNet.Testing;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -35,6 +36,7 @@ public sealed class DubboProviderMethodsEndToEndTests
 {
     private readonly EndToEndClientPool _clientPool;
     private readonly ITestOutputHelper _output;
+    private bool _expectBinary;
 
     public DubboProviderMethodsEndToEndTests(
         EndToEndClientPool clientPool,
@@ -49,6 +51,73 @@ public sealed class DubboProviderMethodsEndToEndTests
 
     public static IEnumerable<object[]> MetadataCoverageCases() =>
         EndToEndTestCatalog.MetadataCoverageCases();
+
+    // The first binary interoperability claim is Java Triple 3.3.6. Older Java
+    // providers remain in the existing classic-Dubbo coverage, not silently skipped.
+    public static IEnumerable<object[]> BinaryInvocationCases() =>
+        EndToEndTestCatalog.InvocationCases().Where(row => (string)row[1] == "3.3.6");
+
+    [EndToEndTheory]
+    [MemberData(nameof(BinaryInvocationCases))]
+    public async Task Every_java_method_can_be_invoked_over_binary_triple(
+        string registryKind, string version, string rootPath, string caseId)
+    {
+        _expectBinary = true;
+        DubboClient client = _clientPool.GetClient(registryKind, rootPath, TripleWireMode.Hessian2Wrapper);
+        await InvokeAndVerifyAsync(client, EndToEndTestCatalog.GetMethod(caseId), registryKind, version);
+    }
+
+    [EndToEndTheory]
+    [InlineData(EndToEndTestCatalog.ZooKeeper, "UserService.batchGet(long[])")]
+    [InlineData(EndToEndTestCatalog.Nacos, "UserService.batchGet(long[])")]
+    [InlineData(EndToEndTestCatalog.ZooKeeper, "UserService.listUsers(java.util.List)")]
+    [InlineData(EndToEndTestCatalog.Nacos, "UserService.listUsers(java.util.List)")]
+    public async Task Binary_hash_sends_single_use_collections_to_the_real_java_provider(string registryKind, string caseId)
+    {
+        _expectBinary = true;
+        DubboClient client = _clientPool.GetClient(registryKind, EndToEndRegistryLayout.RootPath("3.3.6"),
+            TripleWireMode.Hessian2Wrapper, DubboClient.LoadBalanceMode.ConsistentHash);
+        await InvokeAndVerifyAsync(client, EndToEndTestCatalog.GetMethod(caseId), registryKind, "3.3.6");
+    }
+
+    [EndToEndTheory]
+    [InlineData(EndToEndTestCatalog.ZooKeeper)]
+    [InlineData(EndToEndTestCatalog.Nacos)]
+    public async Task Binary_infers_a_generic_list_signature_from_metadata(string registryKind)
+    {
+        DubboClient client = _clientPool.GetClient(registryKind,
+            EndToEndRegistryLayout.RootPath("3.3.6"), TripleWireMode.Hessian2Wrapper);
+        var ids = new SingleUseArguments(new long[] { 41, 42 });
+
+        DubboRequestResult result = await client.QueryAsync(EndToEndTestCatalog.UserService + ".listUsers", ids);
+
+        AssertSuccess(result);
+        Assert.Equal(0, result.GrpcStatusCode);
+        Assert.Equal(new Version(2, 0), result.ResponseHttpVersion);
+        using JsonDocument document = JsonDocument.Parse(result.Result!);
+        Assert.Equal(new long[] { 41, 42 }, document.RootElement.EnumerateArray()
+            .Select(user => Property(user, "id").GetInt64()));
+    }
+
+    [EndToEndTheory]
+    [InlineData(EndToEndTestCatalog.ZooKeeper)]
+    [InlineData(EndToEndTestCatalog.Nacos)]
+    public async Task Binary_preserves_java_nan_as_a_successful_typed_result(string registryKind)
+    {
+        DubboClient client = _clientPool.GetClient(registryKind,
+            EndToEndRegistryLayout.RootPath("3.3.6"), TripleWireMode.Hessian2Wrapper);
+
+        // The Java fixture returns Double.NaN for an empty input array.
+        DubboRequestResult<double> result = await client.QueryAsync<double>(
+            EndToEndTestCatalog.DataTypeService + ".average",
+            new[] { "double[]" }, new object[] { Array.Empty<double>() });
+
+        Assert.Equal(0, result.GrpcStatusCode);
+        Assert.True(double.IsNaN(Assert.IsType<double>(result.RawResult)));
+        AssertSuccess(result);
+        Assert.Equal("\"NaN\"", result.Result);
+        Assert.True(double.IsNaN(result.ResultModle));
+    }
 
     [EndToEndTheory]
     [MemberData(nameof(InvocationCases))]
@@ -381,14 +450,46 @@ public sealed class DubboProviderMethodsEndToEndTests
         ProviderMethodCase method,
         params object[] arguments)
     {
+        // The Java response assertions also prove these sequences reach the
+        // Provider intact. A client-side JSON/hash prepass must not consume them.
+        if (_expectBinary)
+        {
+            arguments = arguments.Select((value, index) =>
+                (method.ParameterTypes[index] == "java.util.List"
+                    || method.ParameterTypes[index].EndsWith("[]", StringComparison.Ordinal)
+                        && method.ParameterTypes[index] != "byte[]")
+                    && value is System.Collections.IEnumerable sequence
+                    ? (object)new SingleUseArguments(sequence) : value).ToArray();
+        }
         DubboRequestResult result = await client.QueryAsync(
             method.Service + "." + method.Method,
             method.ParameterTypes,
             arguments);
+        if (_expectBinary)
+        {
+            Assert.NotNull(result.GrpcStatusCode); // Also proves RPC errors used the binary transport.
+            Assert.Equal(new Version(2, 0), result.ResponseHttpVersion);
+            Assert.Null(result.ResponseStatus); // Cannot accidentally pass via Native Dubbo.
+            _output.WriteLine($"[BINARY HTTP/2] grpc-status={result.GrpcStatusCode}");
+        }
         _output.WriteLine(
             $"{method.Id}: success={result.QuerySuccess}, elapsed={result.RequestElapsed}ms, " +
             $"result={Shorten(result.Result)}, error={Shorten(result.ErrorMeaasge)}");
         return result;
+    }
+
+    private sealed class SingleUseArguments : IEnumerable<object>
+    {
+        private readonly System.Collections.IEnumerable _source;
+        private bool _used;
+        internal SingleUseArguments(System.Collections.IEnumerable source) => _source = source;
+        public IEnumerator<object> GetEnumerator()
+        {
+            if (_used) throw new InvalidOperationException("The binary request collection was enumerated more than once.");
+            _used = true;
+            return _source.Cast<object>().GetEnumerator();
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private static void AssertSuccess(DubboRequestResult result)

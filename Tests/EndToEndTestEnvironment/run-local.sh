@@ -56,7 +56,8 @@ run_logged() {
 }
 
 docker compose -f "$script_dir/compose.yaml" up -d
-run_logged java-build mvn -B -ntp -f "$script_dir/JavaProviders/pom.xml" package -DskipTests
+# Run the same Java wrapper contract test as the CI build.
+run_logged java-build mvn -B -ntp -f "$script_dir/JavaProviders/pom.xml" package
 "$script_dir/start-providers.sh" "$log_dir"
 DUBBONET_PROVIDER_HOST=$(<"$log_dir/provider-host")
 if [[ -z "$DUBBONET_PROVIDER_HOST" ]]; then

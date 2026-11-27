@@ -29,6 +29,17 @@ namespace DubboNet.DubboService.DataModle
     /// </summary>
     public class DubboActuatorSuiteConf
     {
+        /// <summary>Triple 调用模式；默认 HTTP/JSON。EN: Triple wire mode; defaults to HTTP/JSON.</summary>
+        public TripleWireMode TripleWireMode { get; set; } = TripleWireMode.HttpJson;
+
+        /// <summary>二进制 Triple 单条消息的收发上限（字节），默认 8 MiB。
+        /// EN: Maximum sent/received binary Triple message size in bytes; defaults to 8 MiB.</summary>
+        public int TripleMaxMessageBytes { get; set; } = 8 * 1024 * 1024;
+
+        /// <summary>Triple 使用 HTTPS；默认明文。证书由运行时正常验证。
+        /// EN: Use HTTPS for Triple; defaults to plaintext. Normal runtime certificate validation applies.</summary>
+        public bool TripleUseTls { get; set; }
+
         /// <summary>
         /// 获取或设置最大连接数；对 <see cref="TripleDubboActuatorSuite"/> 表示每个 Provider 的最大 HTTP 连接数，
         /// 对 <see cref="TelnetDubboActuatorSuite"/> 表示 TCP 连接池上限。

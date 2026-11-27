@@ -12,6 +12,10 @@ Service selection turns addresses from [registry discovery](registry.md) into **
 
 `DubboServiceDriver.SelectAndReserve` first excludes disabled endpoints and those with nonpositive weight, then filters by protocol, service version, and group. It selects from the remainder using weighted random, smooth weighted round-robin, consistent hash, least active, shortest response, or P2C; active counts and latency come from client-side per-method call statistics.
 
+Explicit binary Triple mode supplies a Triple protocol requirement to this same filtering step. All six strategies therefore select only eligible `tri://` candidates. A `dubbo://` endpoint is never chosen as a binary-mode fallback.
+
+Binary non-hash modes do not serialize arguments to obtain a selection key. Binary consistent hash prepares one wrapper and hashes its exact bytes; the transport reuses that private snapshot so single-use arguments are not enumerated twice. See [binary request preparation](../protocols/triple.md#wire-contract-and-implementation) for key contents and affinity across wire modes.
+
 Selection and incrementing the in-flight reference share a synchronization boundary, protecting a call's resources if a Provider is removed during dispatch.
 
 ## Updates and release

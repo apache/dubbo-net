@@ -18,6 +18,8 @@
 using DubboNet.Clients;
 using DubboNet.DubboService;
 using System.Collections.Concurrent;
+using DubboNet.DubboService.DataModle;
+using DubboNet.Testing;
 using Xunit;
 
 namespace DubboNetEndToEndTests;
@@ -61,20 +63,22 @@ public sealed class EndToEndClientPool : IDisposable
 
     public EndToEndClientPool() => DubboNet.Testing.LibraryAssetVerification.Verify();
 
-    public DubboClient GetClient(string registryKind, string rootPath)
+    public DubboClient GetClient(string registryKind, string rootPath, TripleWireMode wireMode = TripleWireMode.HttpJson,
+        DubboClient.LoadBalanceMode balanceMode = DubboClient.LoadBalanceMode.RoundRobin)
     {
         string registryAddress = EndToEndTestCatalog.GetRegistryAddress(registryKind);
-        string key = registryAddress + "|" + rootPath;
+        string key = registryAddress + "|" + rootPath + "|" + wireMode + "|" + balanceMode;
         return _clients.GetOrAdd(key, _ => new DubboClient(
             registryAddress,
             new DubboClient.DubboClientConf
             {
                 DubboRootPath = rootPath,
+                TripleWireMode = wireMode,
+                NowLoadBalanceMode = balanceMode,
                 MetadataRootPath = rootPath,
                 DubboRequestTimeout = 10_000,
                 TelnetMetadataTimeout = 5_000,
-                MaintainServiceNum = 10,
-                NowLoadBalanceMode = DubboClient.LoadBalanceMode.RoundRobin
+                MaintainServiceNum = 10
             }));
     }
 
@@ -119,12 +123,12 @@ internal static class EndToEndTestCatalog
 
     public static readonly IReadOnlyList<ProviderVersionScenario> Versions = new[]
     {
-        new ProviderVersionScenario(ZooKeeper, "2.7.23", "/dubbo-2.7.23"),
-        new ProviderVersionScenario(ZooKeeper, "3.1.11", "/dubbo-3.1.11"),
-        new ProviderVersionScenario(ZooKeeper, "3.2.20", "/dubbo-3.2.20"),
-        new ProviderVersionScenario(ZooKeeper, "3.3.6", "/dubbo-3.3.6"),
-        new ProviderVersionScenario(Nacos, "3.2.20", "/dubbo-3.2.20"),
-        new ProviderVersionScenario(Nacos, "3.3.6", "/dubbo-3.3.6")
+        new ProviderVersionScenario(ZooKeeper, "2.7.23", EndToEndRegistryLayout.RootPath("2.7.23")),
+        new ProviderVersionScenario(ZooKeeper, "3.1.11", EndToEndRegistryLayout.RootPath("3.1.11")),
+        new ProviderVersionScenario(ZooKeeper, "3.2.20", EndToEndRegistryLayout.RootPath("3.2.20")),
+        new ProviderVersionScenario(ZooKeeper, "3.3.6", EndToEndRegistryLayout.RootPath("3.3.6")),
+        new ProviderVersionScenario(Nacos, "3.2.20", EndToEndRegistryLayout.RootPath("3.2.20")),
+        new ProviderVersionScenario(Nacos, "3.3.6", EndToEndRegistryLayout.RootPath("3.3.6"))
     };
 
     public static readonly IReadOnlyList<ProviderMethodCase> Methods = new[]

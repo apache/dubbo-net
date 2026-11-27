@@ -23,6 +23,7 @@
     <NuGetAuditMode>all</NuGetAuditMode>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" Condition="'$(TargetFramework)' != 'net48'" />
     <!-- Exact prerelease identity: never silently fall forward to a public release. -->
     <PackageReference Include="DubboNet" Version="[$(DubboNetPackageVersion)]" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3"

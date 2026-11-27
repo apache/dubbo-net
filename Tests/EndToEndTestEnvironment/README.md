@@ -34,7 +34,8 @@ advertise Docker-only container addresses to host clients.
 | ZooKeeper | 2.7.23 / 3.1.11 / 3.2.20 / 3.3.6 | 20883 / 20882 / 20881 / 20880 |
 | Nacos Naming + Config | 3.2.20 / 3.3.6 | 20881 / 20880 |
 
-Dubbo 3.3.6 also exposes Triple Java Interface Unary HTTP/JSON on port `50051`.
+Dubbo 3.3.6 exposes Java Interface Unary Triple on port `50051` for both HTTP/JSON
+and HTTP/2 Hessian2 wrapper calls.
 The registries require host ports `2181`, `8848`, `9848`, and `9849`.
 Each CI job has its own runner and Compose project. Fixed ports mean local runs must not
 overlap on the same machine or conflict with existing registries/Providers.
@@ -58,6 +59,11 @@ The workflow performs all of the following, without silently omitting versions:
   OrderService, OverloadService, and UserService across the six registry/version combinations.
   Cases include arrays, maps, nested POJO, enums, decimals, overloads, stateful updates, and
   expected Provider exceptions. These are logical test cases; a case may send multiple RPCs.
+- The binary Triple cases invoke all 25 Java 3.3.6 methods through each registry.
+  They assert the HTTP/2 response and a gRPC status and check consistent hash,
+  inferred signatures and non-finite floating-point results.
+- The Java fixture build checks fixed wrapper bytes using the Apache Dubbo
+  encoder. Both CI and the local runner execute that contract test.
 - Six metadata coverage cases compare all exposed signatures against the test catalog,
   applying Java generic type erasure. Adding a Provider method requires a matching test.
 - A dedicated ZooKeeper discovery case constructs the production `ProviderDiscovery(MyZookeeper, ...)`
@@ -124,7 +130,7 @@ export DUBBONET_E2E_NACOS_ADDRESS=nacos://127.0.0.1:8848
 
 dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
   -p:GeneratePackageOnBuild=false --logger "console;verbosity=detailed"
-# To run just the older consumer (the same full 157-case suite):
+# To run the same end-to-end suite using the older consumer:
 dotnet test Tests/DubboNetEndToEndTests/DubboNetEndToEndTests.csproj \
   -f net6.0 -p:GeneratePackageOnBuild=false
 
@@ -137,8 +143,12 @@ dotnet run --project Tests/QueryDemo/QueryDemo.csproj \
   -- --registry 127.0.0.1:2181 --provider-host "$DUBBONET_PROVIDER_HOST"
 ```
 
-Registry roots/metadata groups are `dubbo-{version}`; service version is `1.0.0`,
-and service group is `dubbonet-{version}`. Provider defaults are local. To override
+Registry roots and metadata groups default to `dubbo-{version}`. To isolate
+another fixture run in the same registry, export `DUBBONET_E2E_ROOT_PREFIX` in the
+shell that launches both the Providers and the test programs. The readiness
+probe, integration tests, xUnit project and QueryDemo use the same prefix.
+Service version is `1.0.0` and service group is `dubbonet-{version}`.
+Provider defaults are local. To override
 registry locations, use `DUBBONET_ZOOKEEPER_REGISTRY_ADDRESS` and
 `DUBBONET_NACOS_REGISTRY_ADDRESS`, not Dubbo's global `DUBBO_REGISTRY_ADDRESS`, which
 would collapse the two registry settings in Dubbo 3.3.

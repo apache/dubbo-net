@@ -18,6 +18,7 @@
 using DubboNet.Clients.DataModle;
 using DubboNet.DubboService.DataModle;
 using DubboNet.DubboService.Native;
+using DubboNet.DubboService.Triple;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -33,16 +34,12 @@ using System.Threading.Tasks;
 namespace DubboNet.DubboService
 {
     /// <summary>
-    /// 通过 Dubbo 3.3 引入的 HTTP/JSON 兼容端点调用 Dubbo Triple Java 接口一元方法。
-    /// EN: Invokes Dubbo Triple Java-interface unary methods through the HTTP/JSON
-    /// compatibility endpoint introduced by Dubbo 3.3.
+    /// 调用 Dubbo Triple Java 接口一元方法，支持 HTTP/JSON 和显式的 HTTP/2 Hessian2 wrapper 模式。
+    /// EN: Invokes Dubbo Triple Java-interface unary methods with HTTP/JSON or explicit HTTP/2 Hessian2 wrappers.
     /// </summary>
     /// <remarks>
-    /// 第一期实现仅面向使用 <c>application/json</c> 的 Java 接口一元调用，不包含
-    /// Protobuf IDL、流式调用和带帧的 gRPC 线协议。
-    /// EN: This first implementation intentionally targets unary Java-interface calls
-    /// with <c>application/json</c>. Protobuf IDL, streaming and the framed gRPC
-    /// wire format are outside its scope.
+    /// 二进制模式使用 Java $invoke、固定 Protobuf wrapper 与 Hessian2；不支持用户 Protobuf IDL 或流式调用。
+    /// EN: Binary mode uses Java $invoke, fixed Protobuf wrappers and Hessian2; user Protobuf IDL and streaming are not supported.
     /// </remarks>
     public sealed class TripleDubboActuatorSuite :
         IDubboActuatorSuite,
@@ -74,9 +71,12 @@ namespace DubboNet.DubboService
         private readonly HttpClient _httpClient;
         private readonly bool _ownsHttpClient;
         private readonly int _requestTimeoutMilliseconds;
+        private readonly BinaryTripleTransport _binaryTransport;
+        private readonly CancellationTokenSource _disposeSource;
+        private readonly CancellationToken _disposeToken;
         private readonly ConcurrentDictionary<string, ServiceMetadata> _services =
             new ConcurrentDictionary<string, ServiceMetadata>(StringComparer.Ordinal);
-        private bool _disposed;
+        private int _disposed;
 
         /// <inheritdoc/>
         public DubboActuatorProtocolType ProtocolType => DubboActuatorProtocolType.Triple;
@@ -98,8 +98,8 @@ namespace DubboNet.DubboService
         public string DefaultServiceName { get; private set; }
 
         /// <summary>
-        /// 使用指定地址和端口创建 Triple HTTP/JSON 执行器。
-        /// EN: Creates a Triple HTTP/JSON actuator from an address and port.
+        /// 使用指定地址和端口创建 Triple 执行器，默认使用 HTTP/JSON。
+        /// EN: Creates a Triple actuator from an address and port; defaults to HTTP/JSON.
         /// </summary>
         /// <param name="address">Provider 地址。EN: Provider address.</param>
         /// <param name="port">Provider 端口。EN: Provider port.</param>
@@ -116,8 +116,8 @@ namespace DubboNet.DubboService
         }
 
         /// <summary>
-        /// 使用网络端点创建 Triple HTTP/JSON 执行器。
-        /// EN: Creates a Triple HTTP/JSON actuator from a network endpoint.
+        /// 使用网络端点创建 Triple 执行器，默认使用 HTTP/JSON。
+        /// EN: Creates a Triple actuator from a network endpoint; defaults to HTTP/JSON.
         /// </summary>
         /// <param name="endPoint">Provider 网络端点。EN: Provider network endpoint.</param>
         /// <param name="dubboActuatorSuiteConf">执行器配置。EN: Actuator configuration.</param>
@@ -154,9 +154,16 @@ namespace DubboNet.DubboService
 
             DubboActuatorSuiteConf configuration =
                 dubboActuatorSuiteConf ?? new DubboActuatorSuiteConf();
+            ValidateConfiguration(configuration);
             DefaultServiceName = configuration.DefaultServiceName;
             _requestTimeoutMilliseconds = Math.Max(1, configuration.DubboRequestTimeout);
             _ownsHttpClient = ownsHttpClient;
+            _disposeSource = new CancellationTokenSource();
+            // Cache the token before disposal: a concurrent call must not access
+            // CancellationTokenSource.Token after the source has been disposed.
+            _disposeToken = _disposeSource.Token;
+            if (configuration.TripleWireMode == TripleWireMode.Hessian2Wrapper)
+                _binaryTransport = new BinaryTripleTransport(httpClient, configuration.TripleMaxMessageBytes);
         }
 
         internal void RegisterService(DubboServiceEndPointInfo endpoint)
@@ -211,7 +218,7 @@ namespace DubboNet.DubboService
             DubboInvocation invocation,
             CancellationToken cancellationToken)
         {
-            if (_disposed)
+            if (Volatile.Read(ref _disposed) != 0)
             {
                 throw new ObjectDisposedException(nameof(TripleDubboActuatorSuite));
             }
@@ -232,48 +239,59 @@ namespace DubboNet.DubboService
                 1,
                 metadata?.Timeout ?? _requestTimeoutMilliseconds);
 
-            string requestPath = $"/{Uri.EscapeDataString(invocation.Service)}" +
-                $"/{Uri.EscapeDataString(invocation.Method)}";
-            string requestBody = JsonSerializer.Serialize(invocation.Arguments);
-
-            // One per-call deadline covers both headers and body. The owned
+            // The per-call transport deadline covers headers and body. The owned
             // HttpClient has no competing timeout; provider metadata overrides
             // the configured default, including when the provider allows longer.
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(timeoutMilliseconds);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeToken);
             try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, requestPath)
+                timeout.Token.ThrowIfCancellationRequested();
+                if (_binaryTransport != null)
                 {
-                    Content = new StringContent(requestBody, Encoding.UTF8, "application/json")
-                };
-                HttpCompatibility.SetHttp11Exact(request);
-
-                AddHeader(request, ServiceVersionHeader, version);
-                AddHeader(request, ServiceGroupHeader, group);
-                AddHeader(request, ServiceTimeoutHeader, timeoutMilliseconds.ToString());
-                AddAttachments(request, invocation.Attachments);
-
-                using HttpResponseMessage response = await _httpClient.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    timeout.Token).ConfigureAwait(false);
-                string responseBody = await HttpCompatibility
-                    .ReadAsStringAsync(response, timeout.Token)
-                    .ConfigureAwait(false);
-
-                stopwatch.Stop();
-                result.RequestElapsed = (int)stopwatch.ElapsedMilliseconds;
-                result.Result = responseBody;
-                result.RawResult = ParseResponseValue(responseBody);
-                result.ResponseAttachments = ReadResponseHeaders(response);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    result.UpdateQueryFailed();
-                    result.ErrorMeaasge = BuildHttpError(response, responseBody);
+                    timeout.CancelAfter(timeoutMilliseconds);
+                    await _binaryTransport.SendAsync(invocation, version, group,
+                        timeoutMilliseconds, stopwatch, result, timeout.Token).ConfigureAwait(false);
                 }
+                else
+                {
+                    string requestPath = $"/{Uri.EscapeDataString(invocation.Service)}" +
+                        $"/{Uri.EscapeDataString(invocation.Method)}";
+                    string requestBody = JsonSerializer.Serialize(invocation.Arguments);
+                    // 保留 HTTP/JSON 的传输超时起点，序列化完成后才开始计时。
+                    // EN: Preserve the HTTP/JSON transport timeout boundary after serialization.
+                    timeout.Token.ThrowIfCancellationRequested();
+                    timeout.CancelAfter(timeoutMilliseconds);
+                    using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, requestPath)
+                    {
+                        Content = new StringContent(requestBody, Encoding.UTF8, "application/json")
+                    };
+                    HttpCompatibility.SetHttp11Exact(request);
+
+                    AddHeader(request, ServiceVersionHeader, version);
+                    AddHeader(request, ServiceGroupHeader, group);
+                    AddHeader(request, ServiceTimeoutHeader, timeoutMilliseconds.ToString());
+                    AddAttachments(request, invocation.Attachments);
+
+                    using HttpResponseMessage response = await _httpClient.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeout.Token).ConfigureAwait(false);
+                    string responseBody = await HttpCompatibility
+                        .ReadAsStringAsync(response, timeout.Token)
+                        .ConfigureAwait(false);
+
+                    result.Result = responseBody;
+                    result.RawResult = ParseResponseValue(responseBody);
+                    result.ResponseAttachments = ReadResponseHeaders(response);
+                    result.ResponseHttpVersion = response.Version;
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        result.UpdateQueryFailed();
+                        result.ErrorMeaasge = BuildHttpError(response, responseBody);
+                    }
+                }
+                timeout.Token.ThrowIfCancellationRequested();
             }
             catch (Exception exception)
             {
@@ -285,12 +303,16 @@ namespace DubboNet.DubboService
                 result.ErrorMeaasge = exception is OperationCanceledException
                     ? cancellationToken.IsCancellationRequested
                         ? "Triple request canceled by caller."
-                        : timeout.IsCancellationRequested
-                            ? $"Triple request timed out after {timeoutMilliseconds} ms."
-                            : exception.Message
+                        : _disposeToken.IsCancellationRequested
+                            ? "Triple actuator has been disposed."
+                            : timeout.IsCancellationRequested
+                                ? $"Triple request timed out after {timeoutMilliseconds} ms."
+                                : exception.Message
                     : exception.Message;
             }
 
+            stopwatch.Stop();
+            result.RequestElapsed = (int)stopwatch.ElapsedMilliseconds;
             ActuatorSuiteStatusInfo.LastQueryElapsed = result.RequestElapsed;
             return result;
         }
@@ -395,13 +417,16 @@ namespace DubboNet.DubboService
 
             DubboActuatorSuiteConf effectiveConfiguration =
                 configuration ?? new DubboActuatorSuiteConf();
-            Uri baseAddress = new UriBuilder(Uri.UriSchemeHttp, address, port).Uri;
+            ValidateConfiguration(effectiveConfiguration);
+            Uri baseAddress = new UriBuilder(effectiveConfiguration.TripleUseTls
+                ? Uri.UriSchemeHttps : Uri.UriSchemeHttp, address, port).Uri;
             int maxConnections = Math.Max(1, effectiveConfiguration.MaxConnections);
             HttpMessageHandler handler = HttpCompatibility.CreateHandler(
                 maxConnections,
                 effectiveConfiguration.MasterConnectionAliveTime > 0
                     ? TimeSpan.FromSeconds(effectiveConfiguration.MasterConnectionAliveTime)
-                    : Timeout.InfiniteTimeSpan);
+                    : Timeout.InfiniteTimeSpan,
+                binaryTriple: effectiveConfiguration.TripleWireMode == TripleWireMode.Hessian2Wrapper);
 
             HttpClient client = new HttpClient(handler)
             {
@@ -409,6 +434,15 @@ namespace DubboNet.DubboService
                 Timeout = Timeout.InfiniteTimeSpan
             };
             return client;
+        }
+
+        private static void ValidateConfiguration(DubboActuatorSuiteConf configuration)
+        {
+            if (configuration.TripleWireMode != TripleWireMode.HttpJson &&
+                configuration.TripleWireMode != TripleWireMode.Hessian2Wrapper)
+                throw new ArgumentOutOfRangeException(nameof(configuration.TripleWireMode));
+            if (configuration.TripleMaxMessageBytes <= 0)
+                throw new ArgumentOutOfRangeException(nameof(configuration.TripleMaxMessageBytes));
         }
 
         private static void AddHeader(
@@ -496,14 +530,15 @@ namespace DubboNet.DubboService
         /// <inheritdoc/>
         public void Dispose()
         {
-            if (_disposed)
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            // ResponseHeadersRead completes HttpClient.SendAsync before the body
+            // is consumed. Disposing its pool alone need not interrupt such reads;
+            // cancel this suite's calls explicitly, including with an injected client.
+            try { _disposeSource.Cancel(); }
+            finally
             {
-                return;
-            }
-            _disposed = true;
-            if (_ownsHttpClient)
-            {
-                _httpClient.Dispose();
+                try { if (_ownsHttpClient) _httpClient.Dispose(); }
+                finally { _disposeSource.Dispose(); }
             }
         }
     }

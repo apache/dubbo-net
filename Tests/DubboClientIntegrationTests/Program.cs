@@ -62,19 +62,10 @@ catch (Exception exception) when (exception is ArgumentException or System.Net.S
     return;
 }
 bool useNacos = registryAddress.StartsWith("nacos://", StringComparison.OrdinalIgnoreCase);
-VersionScenario[] versions = useNacos
-    ? new[]
-    {
-        new VersionScenario("3.2.20", "/dubbo-3.2.20"),
-        new VersionScenario("3.3.6", "/dubbo-3.3.6")
-    }
-    : new[]
-    {
-        new VersionScenario("2.7.23", "/dubbo-2.7.23"),
-        new VersionScenario("3.1.11", "/dubbo-3.1.11"),
-        new VersionScenario("3.2.20", "/dubbo-3.2.20"),
-        new VersionScenario("3.3.6", "/dubbo-3.3.6")
-    };
+VersionScenario[] versions = (useNacos ? new[] { "3.2.20", "3.3.6" }
+    : new[] { "2.7.23", "3.1.11", "3.2.20", "3.3.6" })
+    .Select(version => new VersionScenario(version, EndToEndRegistryLayout.RootPath(version)))
+    .ToArray();
 
 if (checkReadiness)
 {
@@ -130,29 +121,31 @@ static async Task RunNacosDirectoryCasesAsync(string registryAddress, IPAddress[
     try
     {
         using var nacos = new MyNacos(registryAddress);
+        string group32 = EndToEndRegistryLayout.Group("3.2.20");
+        string group33 = EndToEndRegistryLayout.Group("3.3.6");
         IReadOnlyList<string> roots = await nacos.ListRegistryRootsAsync();
         Record("Nacos", "directory/registry-roots",
-            roots.Contains("dubbo-3.2.20") && roots.Contains("dubbo-3.3.6"),
+            roots.Contains(group32) && roots.Contains(group33),
             string.Join(", ", roots), summary);
 
-        IReadOnlyList<string> services = await nacos.ListServicesAsync("dubbo-3.3.6");
+        IReadOnlyList<string> services = await nacos.ListServicesAsync(group33);
         Record("Nacos", "directory/dubbo-services",
             services.Contains(EchoService) && services.Contains(DataTypeService),
             $"{services.Count} services", summary);
 
         IReadOnlyList<DubboServiceEndPointInfo> providers = await nacos.GetProvidersAsync(
             EchoService,
-            "dubbo-3.3.6");
+            group33);
         Record("Nacos", "directory/providers",
             providers.Any(provider => provider.EndPoint != null && providerAddresses.Contains(provider.EndPoint.Address)),
             string.Join(", ", providers.Select(provider => $"{provider.Scheme}://{provider.EndPoint}")),
             summary);
 
-        string rawService = (await nacos.ListNacosServicesAsync("dubbo-3.3.6"))
+        string rawService = (await nacos.ListNacosServicesAsync(group33))
             .First(name => name.StartsWith("providers:" + EchoService, StringComparison.Ordinal));
         IReadOnlyList<NacosServiceInstanceInfo> instances = await nacos.GetServiceInstancesAsync(
             rawService,
-            "dubbo-3.3.6");
+            group33);
         Record("Nacos", "directory/raw-instances",
             instances.Any(instance => providerAddresses.Any(address => address.ToString() == instance.Ip)
                 && instance.Metadata.ContainsKey("protocol")),

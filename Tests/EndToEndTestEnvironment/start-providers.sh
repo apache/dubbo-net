@@ -20,6 +20,11 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 provider_root="$script_dir/JavaProviders"
 log_dir=${1:-"$script_dir/logs"}
 pid_file="$log_dir/provider-pids"
+registry_prefix=${DUBBONET_E2E_ROOT_PREFIX:-}
+if [[ -n "$registry_prefix" && ! "$registry_prefix" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "DUBBONET_E2E_ROOT_PREFIX accepts ASCII letters, digits, dots, underscores, and hyphens." >&2
+  exit 1
+fi
 
 mkdir -p "$log_dir"
 if [[ -f "$pid_file" ]]; then
@@ -68,7 +73,13 @@ for module in "${modules[@]}"; do
     exit 1
   fi
 
-  java -Xms64m -Xmx256m -jar "$jar_file" > "$log_dir/$module.log" 2>&1 &
+  if [[ -n "$registry_prefix" ]]; then
+    # Keep local runs on shared registries isolated from existing provider groups.
+    DUBBO_REGISTRY_GROUP="$registry_prefix-${module#provider-}" \
+      java -Xms64m -Xmx256m -jar "$jar_file" > "$log_dir/$module.log" 2>&1 &
+  else
+    java -Xms64m -Xmx256m -jar "$jar_file" > "$log_dir/$module.log" 2>&1 &
+  fi
   provider_pid=$!
   echo "$provider_pid" >> "$pid_file"
   echo "Started $module (PID $provider_pid)."

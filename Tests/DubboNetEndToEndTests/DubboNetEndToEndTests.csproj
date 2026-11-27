@@ -25,6 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../Shared/EndToEndRegistryLayout.cs" Link="EndToEndRegistryLayout.cs" />
     <ProjectReference Include="..\..\DubboNet.csproj" />
   </ItemGroup>
 

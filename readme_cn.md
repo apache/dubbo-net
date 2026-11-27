@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-DubboNet 是一个面向 .NET 的 Dubbo 客户端库。它可以从 ZooKeeper 或 Nacos 发现 Provider，依据 Provider URL 选择传输执行器，并通过经典 Dubbo TCP/Hessian2 或 Dubbo 3 Triple HTTP/JSON 调用 Java 接口，因此调用方不需要引用 Java 接口 JAR。
+DubboNet 是面向 .NET 的 Dubbo 客户端库，可以从 ZooKeeper 或 Nacos 发现 Provider，并通过经典 Dubbo TCP/Hessian2、Triple HTTP/JSON，或显式启用的 HTTP/2 Java wrapper/Hessian2 二进制 Triple 调用 Java 接口。调用方不需要引用 Java 接口 JAR。
 
 > 核心库同时目标化 **.NET Standard 2.0、.NET 8 和 .NET 10**。源码构建仍需要 .NET 10 SDK；示例使用 .NET 10，单元测试运行于 .NET 8/10，端到端测试也验证 .NET 6 消费者。这些目标适用于当前源码及由其构建的新包，不会改变此前发布的个人项目 NuGet 包。原生 Dubbo TCP 已在 **Dubbo 2.7.3** Provider 上完成真实环境验证；Triple 第一期已在 **Dubbo 3.3.6** Java Interface Provider 上完成真实环境验证。请先阅读[版本兼容性 / Compatibility](#版本兼容性--compatibility)。
 
@@ -13,7 +13,7 @@ DubboNet 是一个面向 .NET 的 Dubbo 客户端库。它可以从 ZooKeeper �
 - 从 ZooKeeper 的经典接口级目录或 Nacos 接口级 Naming 服务自动发现和订阅 Provider。
 - 根据 Provider URL scheme 自动选择执行器：
   - `dubbo://`：`NativeDubboActuatorSuite`，使用 Dubbo2 TCP 帧和 Hessian2 泛化调用。
-  - `tri://`：`TripleDubboActuatorSuite`，使用 Dubbo 3.3 的 Java Interface Unary HTTP/JSON 调用。
+  - `tri://`：`TripleDubboActuatorSuite`，默认使用 Java Interface Unary HTTP/JSON，也可显式选择 HTTP/2 wrapper/Hessian2 调用。
 - 支持按权重随机、平滑加权轮询、最短响应、一致性 Hash 等负载策略。
 - 自动从 Dubbo 元数据中心或 Provider Telnet `ls -l` 获取 Java 方法签名。
 - 根据实参数量和 CLR 类型推断重载，并缓存方法元数据。
@@ -43,7 +43,7 @@ DubboClient
    |
    +-- DubboServiceDriver --> 负载均衡 --> 按 scheme 选择执行器
            |-- dubbo:// --> NativeDubboActuatorSuite --> Dubbo TCP + Hessian2
-           +-- tri://   --> TripleDubboActuatorSuite --> Triple Unary HTTP/JSON
+           +-- tri://   --> TripleDubboActuatorSuite --> HTTP/JSON 或显式 HTTP/2 wrapper
 ```
 
 `release` 只决定元数据获取顺序；执行器由 Provider URL 的 scheme 决定。Provider URL 中的 `dubbo=2.0.2` 是经典线协议版本，`version` 和 `group` 则是服务路由信息，这几个字段不要混用。
@@ -271,7 +271,7 @@ var invocation = new DubboInvocation(
 DubboRequestResult result = await suite.SendQuery(invocation);
 ```
 
-Dubbo 3.3+ Java Interface 服务也可以直接使用 Triple 第一期执行器。请求会发送到
+Dubbo 3.3+ Java Interface 服务也可以直接使用默认的 HTTP/JSON Triple 执行器。请求会发送到
 `/{service}/{method}`，正文始终是 JSON 参数数组，并携带服务 version/group 路由头：
 
 ```csharp
@@ -292,6 +292,21 @@ var invocation = new DubboInvocation(
 
 DubboRequestResult result = await triple.SendQuery(invocation);
 ```
+
+通过注册发现使用 Java 接口的二进制 Unary 时，显式配置客户端：
+
+```csharp
+using var client = new DubboClient("127.0.0.1:2181", new DubboClient.DubboClientConf
+{
+    TripleWireMode = TripleWireMode.Hessian2Wrapper,
+    DubboRequestTimeout = 5_000
+});
+var invocation = new DubboInvocation("com.example.EchoService", "echo",
+    new[] { "java.lang.String" }, new object[] { "hello" });
+DubboRequestResult result = await client.QueryAsync(invocation, CancellationToken.None);
+```
+
+该模式在负载均衡前限定选择符合条件的 `tri://` Provider，重载也走这条路径；发送 HTTP/2 帧化的 `$invoke` wrapper，失败后不切换 JSON 或 Native 重试。首个验证的二进制 Provider 为 Java Dubbo 3.3.6，不包含用户 Protobuf/IDL 或流式调用。`TripleUseTls=true` 使用 HTTPS 并正常验证证书。直接创建执行器时，在 `DubboActuatorSuiteConf` 设置同名选项。详见[线协议、资源边界与运行时矩阵](Docs/zh/protocols/triple.md#显式二进制模式)。
 
 Provider 开放 Dubbo Telnet 命令时，也可以显式使用 `DubboActuator` 做诊断：
 
@@ -606,6 +621,8 @@ disposing a DubboClient removes its subscriptions and business connections, not 
 - `ShortestResponse`：基于最近 30 秒成功请求的平均耗时与在途请求数计算估算响应时间，同分加权随机。失败调用单独计数并加入超时量级的评分惩罚，不会把快速失败视为快速成功响应。返回正常业务数据但业务 `code` 失败的结果不会被当作协议失败。
 - `ConsistentHash`：使用稳定 MurmurHash2、UTF-8 请求内容和每节点 160 个虚拟节点；相同候选集和相同请求内容在不同进程中映射一致，不保证与 Java Dubbo 的 Hash 实现互通。未提供 Hash key 时使用加权随机。
 
+显式二进制 Triple 先从已准备的 wrapper 取得 SHA-256 摘要（Base64）作为键，再使用同一个 MurmurHash2 环。键包含方法、精确 Java 类型和参数，不含 trace/deadline 头；复用一次编码结果，避免单次遍历参数被消费两次。Native/HTTP-JSON 保留原有取键方式，切换线协议模式时亲和节点可能变化。详见[二进制请求准备](Docs/zh/protocols/triple.md#线协议与实现归属)。
+
 活跃数是本 `DubboClient` 观察到的在途请求数，不是服务端全局负载或 TCP 连接数；连接可以多路复用。
 统计按 Provider、服务、方法签名及调用指定的 version/group 隔离，不混用同节点上的快慢方法。
 在统一发送入口中仅登记一次，成功、失败、超时、取消或异常均释放预占计数；节点移除或服务缓存淘汰不会提前关闭仍被在途请求持有的连接。显式释放整个 client 仍会关闭它持有的连接。
@@ -669,7 +686,7 @@ else
 | .NET 9 | **可通过 net8.0 引用，未单独验证运行时** | 框架兼容不代表延长运行时厂商支持周期 |
 | .NET 6 | **Standard 消费者，完整 Provider 方法端到端兼容验证** | CI 在 .NET 6 上运行完整端到端用例，也可运行真实本地包的 Native/Triple 冒烟；不代表延长运行时厂商支持周期 |
 | .NET 7 | **可通过 Standard 引用，未单独验证运行时** | 仍需确保应用的完整依赖链兼容 |
-| .NET Framework | **有条件兼容，不承诺注册中心全功能** | 新增 Windows/.NET Framework 4.8 包冒烟任务，覆盖 Native/Triple 与超时；macOS 无法验证 Framework 执行。Nacos 2 SDK 的 gRPC 流式通信不会因 Standard 自动兼容，见[边界说明](Docs/FrameworkCompatibility.md) |
+| .NET Framework | **有条件兼容，不承诺注册中心全功能** | Windows 包冒烟覆盖 Native/Triple HTTP-JSON 和明确的二进制平台拒绝；旧 handler 不支持本实现的二进制 Triple。macOS 无法执行 Framework 测试，见[边界说明](Docs/FrameworkCompatibility.md) |
 | 其他 Standard 2.0 实现 | **API 层面可作为候选，尚未验证** | 不据此承诺 Unity、Xamarin、Mono、移动平台、裁剪或 NativeAOT |
 | ZooKeeper 经典接口级注册 | **支持** | 读取 `/dubbo/{interface}/providers` 并注册 watch |
 | Nacos 2.5.4 接口级注册 | **真实验证** | 使用 Naming 服务发现/订阅 Provider，并从 Config 读取/监听远程元数据；已验证 Dubbo 3.2.20、3.3.6 |
@@ -680,7 +697,8 @@ else
 | Dubbo 3.x 的 classic `dubbo://` 兼容模式 | **真实验证（指定版本）** | ZooKeeper/Nacos 下已验证 3.2.20、3.3.6 的 Dubbo2/Hessian2 `$invoke` Provider；其他版本仍需实测 |
 | Dubbo 3 应用级服务发现 | **未实现** | 未实现 Dubbo 3 application-level service discovery 元数据布局 |
 | Dubbo 3.3.6 + `tri://` + Java Interface Unary JSON | **真实验证（第一期）** | 支持 HTTP/1.1、`application/json`、version/group/timeout 头和 attachments |
-| Triple Protobuf/IDL、流式调用、gRPC framing | **未实现** | 第一期仅覆盖 Java Interface Unary HTTP/JSON，不宣称完整 Triple/gRPC 能力 |
+| Dubbo 3.3.6 二进制 Triple Java Interface Unary | **显式启用** | HTTP/2、固定 Protobuf wrapper、Hessian2 `$invoke`、精确签名、RPC 状态/trailers 和 Java 包装异常；验证 .NET 6/8/10 宿主 |
+| Triple 用户 Protobuf/IDL、流式调用 | **未实现** | Java 二进制 wrapper 不代表用户 IDL、流式调用或完整 gRPC 兼容 |
 | Dubbo Telnet/QoS | **可选** | 仅在 Provider 地址和端口开放相关命令时用于元数据兜底和诊断 |
 | 显式 version/group 路由 | **严格匹配（兼容性变化）** | 非空 `Version` / `Group` 按大小写精确匹配 Provider 身份，不再回退到其他版本/分组；未指定的字段不加约束。没有匹配节点时返回无可用 Provider |
 
@@ -710,9 +728,9 @@ else
 
 更详细的帧头、请求体字段和响应结果 flag 请阅读 [Docs/zh/protocols/native-dubbo.md](Docs/zh/protocols/native-dubbo.md)。
 
-Triple 第一期的请求格式、路由头和明确边界请阅读 [Docs/zh/protocols/triple.md](Docs/zh/protocols/triple.md)。
+Triple 两种调用模式的请求格式、路由头和明确边界请阅读 [Docs/zh/protocols/triple.md](Docs/zh/protocols/triple.md)。
 
-Triple 每次请求使用一个覆盖响应头和完整响应体读取的截止时间。Provider URL 的 `timeout` 优先于客户端 `DubboRequestTimeout`（可更长或更短），未声明时使用客户端默认值；有效值最少为 1 ms。内部 `HttpClient.Timeout` 关闭，避免两个超时隐式竞争。
+Triple 执行器每次请求使用覆盖发送、响应头和完整响应体的截止时间。默认 HTTP/JSON 调用和直接执行器调用仍由 Provider URL `timeout` 优先于配置默认值。二进制客户端调用和 `DubboNet.Clients` 下的取消扩展方法还使用 `DubboRequestTimeout` 作为完整调用上限，包含元数据及服务发现。二进制请求通过 `grpc-timeout` 传递剩余时间。执行器统一通过取消令牌管理 HTTP 超时。
 
 直接使用 Native/Triple 执行器的 `SendQuery(invocation, cancellationToken)` 时，调用方取消仍按现有约定返回 `QuerySuccess == false` 的失败结果，而非让 Task 进入 Canceled 状态；不能依赖 `Task.WhenAll` 自动传播取消，需由上层检查结果/令牌并决定整批操作是否终止。Triple 的 `ErrorMeaasge` 明确区分 `canceled by caller` 与 `timed out after N ms`；取消与截止时间同时触发时优先标记调用方取消。参数错误和对已释放执行器的调用仍可直接抛异常。
 
@@ -800,8 +818,7 @@ Dubbo 3.3.6 的默认 Triple HTTP/JSON 映射不能可靠区分全部 Java 重�
 若只有 `tri://` 节点则返回明确错误。需要通过 Triple 暴露重载时，建议在 Provider 端为
 各重载声明不同的 REST 路由。
 
-第一期不支持 Protobuf/IDL、流式调用或 gRPC framing；这些服务不能通过当前的
-`TripleDubboActuatorSuite` 调用。
+上述重载限制适用于默认 HTTP/JSON 模式。显式 `Hessian2Wrapper` 模式支持精确 Java 签名和 HTTP/2 帧化调用。排查时同时关注 `GrpcStatusCode` 和 `TripleExceptionCode`：Java 包装异常可能伴随 `grpc-status=0` 返回，`QuerySuccess` 会综合判定。用户 Protobuf/IDL 和流式调用仍不支持。
 
 ### 请求超时或连接中断
 

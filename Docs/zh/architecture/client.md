@@ -12,6 +12,10 @@
 
 公开的 `QueryAsync` 重载最终进入 `QueryInternalAsync`。调用方未明确给出 Java 参数类型时，客户端委托 `DubboInvocationMetadataResolver.CreateAsync` 解析方法签名并构造 `DubboInvocation`；显式指定类型时可直接构造调用，仍可能尽力检查同名重载的协议要求。签名无法确定的错误发生在发送之前。
 
+配置 `TripleWireMode.Hessian2Wrapper` 后，客户端在负载均衡之前要求候选为 `tri://`。二进制 Java `$invoke` wrapper 携带精确签名，可以区分重载；没有可用 Triple Provider 时返回失败，不通过其他协议重发。
+
+二进制调用和 `QueryAsync(invocation, cancellationToken)` 扩展方法使用客户端配置的完整调用期限，覆盖元数据等待、发现、选择和传输。扩展方法位于 `DubboNet.Clients`，既有实例重载仍优先匹配。客户端在私有调用副本上记录单调时钟期限。取消共享发现或元数据的等待只结束本次等待。发送后，取消传给当前 RPC，在途预留一直保留到传输实际结束。默认模式的原有重载使用 Provider 传输超时。
+
 `QueryInternalAsync` 向 `DubboDriverCollection` 请求与协议要求匹配的执行器，并预留本次调用。服务尚无 Driver 时，客户端调用注册发现；发现未报错便将端点列表交给新 Driver，再尝试选择，列表为空也不会发送请求。已有 Driver 但没有 Provider 端点时，客户端会主动重查，取得新端点才更新 Driver 并重选。若候选存在但没有可用执行器，则返回失败结果，而不是把它当作“注册中心没有 Provider”。选中后，客户端把调用交给执行器；`LoadBalancedInvocation` 包裹发送过程，并在完成时归还预留。
 
 ## 变化与关闭

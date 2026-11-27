@@ -21,12 +21,14 @@ using DubboNet.Clients.RegistryClient;
 using DubboNet.Registry;
 using DubboNet.DubboService;
 using DubboNet.DubboService.DataModle;
+using DubboNet.DubboService.Triple;
 using MyCommonHelper;
 using org.apache.zookeeper;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -106,6 +108,13 @@ namespace DubboNet.Clients
         /// </summary>
         public class DubboClientConf
         {
+            /// <summary>显式 Triple 模式；Hessian2Wrapper 仅选择 tri Provider，不回退重发。
+            /// EN: Explicit Triple mode; Hessian2Wrapper selects only tri providers and never replays via another protocol.</summary>
+            public TripleWireMode TripleWireMode { get; set; } = TripleWireMode.HttpJson;
+            /// <summary>二进制 Triple 单条消息上限，默认 8 MiB。EN: Binary Triple message limit; defaults to 8 MiB.</summary>
+            public int TripleMaxMessageBytes { get; set; } = 8 * 1024 * 1024;
+            /// <summary>Triple 使用 HTTPS 并正常验证证书。EN: Use HTTPS with normal certificate validation for Triple.</summary>
+            public bool TripleUseTls { get; set; }
             /// <summary>
             /// 注册位置；不填写时 ZooKeeper 使用 <c>/dubbo/</c>，Nacos Naming 使用 <c>DEFAULT_GROUP</c>。
             /// EN: Registry location; when omitted, ZooKeeper uses <c>/dubbo/</c> and Nacos Naming uses <c>DEFAULT_GROUP</c>.
@@ -320,6 +329,10 @@ namespace DubboNet.Clients
         /// </summary>
         public int MaintainServiceNum { get;private set; } = 20;
 
+        private readonly TripleWireMode _tripleWireMode;
+        // The hash preflight and provider actuators use one construction-time limit.
+        private readonly int _tripleMaxMessageBytes;
+
 
 
         /// <summary>
@@ -369,6 +382,13 @@ namespace DubboNet.Clients
                 ? dubboClientConf.TelnetMetadataTimeout
                 : 10 * 1000;
             MaintainServiceNum = dubboClientConf.MaintainServiceNum;
+            if (dubboClientConf.TripleWireMode != TripleWireMode.HttpJson &&
+                dubboClientConf.TripleWireMode != TripleWireMode.Hessian2Wrapper)
+                throw new ArgumentOutOfRangeException(nameof(dubboClientConf.TripleWireMode));
+            if (dubboClientConf.TripleMaxMessageBytes <= 0)
+                throw new ArgumentOutOfRangeException(nameof(dubboClientConf.TripleMaxMessageBytes));
+            _tripleWireMode = dubboClientConf.TripleWireMode;
+            _tripleMaxMessageBytes = dubboClientConf.TripleMaxMessageBytes;
 
             if (_registryUsesNacos)
             {
@@ -426,6 +446,9 @@ namespace DubboNet.Clients
                 DubboActuatorSuiteMasterConnectionAliveTime = DubboActuatorSuiteMasterConnectionAliveTime,
                 DubboActuatorSuiteMaxConnections = DubboActuatorSuiteMaxConnections,
                 DubboRequestTimeout = DubboRequestTimeout,
+                TripleWireMode = _tripleWireMode,
+                TripleMaxMessageBytes = _tripleMaxMessageBytes,
+                TripleUseTls = dubboClientConf.TripleUseTls,
                 MaintainServiceNum = MaintainServiceNum,
                 NowLoadBalanceMode = NowLoadBalanceMode
             });
@@ -622,30 +645,106 @@ namespace DubboNet.Clients
 
         /// <summary>
         /// 根据 <see cref="DubboInvocation"/> 调用 Dubbo 方法；参数类型为空时自动推断，并保留版本、分组和 attachments。
+        /// 二进制 Triple 模式下，无参方法的空签名可直接发送。
         /// EN: Invokes a Dubbo method from a <see cref="DubboInvocation"/>; empty parameter types are inferred while version, group, and attachments are preserved.
+        /// Binary Triple can dispatch an empty signature directly for no-argument methods.
         /// </summary>
         /// <param name="invocation">完整调用描述。EN: The complete invocation descriptor.</param>
         /// <returns>Dubbo 请求结果。EN: The Dubbo request result.</returns>
         /// <exception cref="ArgumentNullException"><paramref name="invocation"/> 为空。EN: <paramref name="invocation"/> is null.</exception>
         /// <exception cref="DubboMetadataException">需要自动推断但元数据不可用或存在歧义。EN: Inference is required but metadata is unavailable or ambiguous.</exception>
-        public async Task<DubboRequestResult> QueryAsync(DubboInvocation invocation)
+        public Task<DubboRequestResult> QueryAsync(DubboInvocation invocation) =>
+            QueryInvocationAsync(invocation, CancellationToken.None,
+                _tripleWireMode == TripleWireMode.Hessian2Wrapper);
+
+        internal async Task<DubboRequestResult> QueryInvocationAsync(DubboInvocation invocation,
+            CancellationToken cancellationToken, bool boundEntireCall)
         {
             Guard.ThrowIfNull(invocation, nameof(invocation));
-            DubboInvocation effectiveInvocation = invocation;
-            if (invocation.ParameterTypes == null || invocation.ParameterTypes.Count == 0)
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (boundEntireCall) budget.CancelAfter(Math.Max(1, DubboRequestTimeout));
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            long? deadline = boundEntireCall
+                ? System.Diagnostics.Stopwatch.GetTimestamp() + (long)(Math.Max(1, DubboRequestTimeout)
+                    * (System.Diagnostics.Stopwatch.Frequency / 1000.0))
+                : (long?)null;
+            try
             {
-                effectiveInvocation = await DubboInvocationMetadataResolver.CreateAsync(
-                    _metadataManager,
-                    invocation.Service,
-                    invocation.Method,
-                    invocation.Arguments ?? Array.Empty<object>(),
-                    invocation).ConfigureAwait(false);
+                budget.Token.ThrowIfCancellationRequested();
+                bool binaryTriple = _tripleWireMode == TripleWireMode.Hessian2Wrapper;
+                DubboInvocation effectiveInvocation = invocation;
+                // An empty signature is exact for a no-argument binary call.
+                // 有明确的空签名时可直接发送，避免等待元数据查询占用调用期限。
+                bool hasExactSignature = invocation.ParameterTypes != null
+                    && (invocation.ParameterTypes.Count > 0 || binaryTriple && invocation.Arguments?.Count == 0);
+                if (!hasExactSignature)
+                {
+                    effectiveInvocation = await DubboInvocationMetadataResolver.CreateAsync(
+                        _metadataManager,
+                        invocation.Service,
+                        invocation.Method,
+                        invocation.Arguments ?? Array.Empty<object>(),
+                        invocation).WaitAsync(budget.Token).ConfigureAwait(false);
+                }
+                effectiveInvocation.Validate();
+                if (deadline.HasValue)
+                    effectiveInvocation = new DubboInvocation(effectiveInvocation.Service, effectiveInvocation.Method,
+                        effectiveInvocation.ParameterTypes, effectiveInvocation.Arguments)
+                    {
+                        Version = effectiveInvocation.Version, Group = effectiveInvocation.Group,
+                        Attachments = effectiveInvocation.Attachments, DeadlineTimestamp = deadline
+                    };
+                string routingRequest;
+                if (binaryTriple)
+                {
+                    try { routingRequest = PrepareBinaryRoutingRequest(effectiveInvocation, budget.Token); }
+                    catch (OperationCanceledException) when (budget.IsCancellationRequested) { throw; }
+                    catch (Exception exception)
+                    {
+                        // Preparation used to run in the actuator. Keep its failure-
+                        // result contract when consistent hashing requires it earlier.
+                        budget.Token.ThrowIfCancellationRequested();
+                        return new DubboRequestResult
+                        {
+                            QuerySuccess = false, ServiceElapsed = -1, ServiceElapsedAvailable = false,
+                            RequestElapsed = (int)elapsed.ElapsedMilliseconds, ErrorMeaasge = exception.Message
+                        };
+                    }
+                }
+                else routingRequest = JsonSerializer.Serialize(effectiveInvocation.Arguments);
+                DubboRequestResult result = await QueryInternalAsync(
+                    $"{invocation.Service}#{invocation.Method}",
+                    routingRequest,
+                    effectiveInvocation, budget.Token).ConfigureAwait(false);
+                budget.Token.ThrowIfCancellationRequested();
+                return result;
             }
-            effectiveInvocation.Validate();
-            return await QueryInternalAsync(
-                $"{invocation.Service}#{invocation.Method}",
-                JsonSerializer.Serialize(effectiveInvocation.Arguments),
-                effectiveInvocation).ConfigureAwait(false);
+            catch (OperationCanceledException) when (budget.IsCancellationRequested)
+            {
+                return new DubboRequestResult
+                {
+                    QuerySuccess = false, ServiceElapsed = -1, ServiceElapsedAvailable = false,
+                    RequestElapsed = (int)elapsed.ElapsedMilliseconds,
+                    ErrorMeaasge = cancellationToken.IsCancellationRequested
+                        ? "Dubbo request canceled by caller."
+                        : $"Dubbo request timed out after {Math.Max(1, DubboRequestTimeout)} ms (including metadata/discovery)."
+                };
+            }
+        }
+
+        // Binary calls must not serialize arguments to JSON just for selection:
+        // that consumes single-use sequences and rejects valid Hessian values.
+        // Hash mode prepares the bounded wrapper once, hashes those exact bytes,
+        // then lets the transport send that same private call-scoped snapshot.
+        private string PrepareBinaryRoutingRequest(DubboInvocation invocation, CancellationToken token)
+        {
+            if (NowLoadBalanceMode != LoadBalanceMode.ConsistentHash) return null;
+            byte[] payload = Hessian2WrapperCodec.EncodeRequest(invocation, _tripleMaxMessageBytes, token);
+            token.ThrowIfCancellationRequested();
+            using var hash = SHA256.Create();
+            string key = Convert.ToBase64String(hash.ComputeHash(payload));
+            invocation.PreparedTripleWrapper = payload;
+            return key;
         }
 
         /// <summary>
@@ -673,6 +772,9 @@ namespace DubboNet.Clients
             IReadOnlyList<object> arguments)
         {
             Tuple<string, string> endpoint = GetSeviceNameFormFuncEndPoint(funcEndPoint);
+            if (_tripleWireMode == TripleWireMode.Hessian2Wrapper)
+                return await QueryAsync(new DubboInvocation(endpoint.Item1, endpoint.Item2,
+                    Array.Empty<string>(), arguments ?? Array.Empty<object>())).ConfigureAwait(false);
             DubboInvocation invocation = await DubboInvocationMetadataResolver.CreateAsync(
                 _metadataManager,
                 endpoint.Item1,
@@ -778,8 +880,10 @@ namespace DubboNet.Clients
         private async Task<DubboRequestResult> QueryInternalAsync(
             string funcEndPoint,
             string req,
-            DubboInvocation invocation)
+            DubboInvocation invocation,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (IsDisposed)
             {
                 throw new Exception("DubboClient is disposed");
@@ -796,7 +900,7 @@ namespace DubboNet.Clients
                 await GetRequiredProtocolAsync(
                     nowServiceName,
                     nowFuncName,
-                    invocation).ConfigureAwait(false);
+                    invocation).WaitAsync(cancellationToken).ConfigureAwait(false);
             AvailableDubboActuatorInfo availableDubboActuatorInfo =
                 _dubboDriverCollection.GetDubboActuatorSuite(
                     nowServiceName,
@@ -811,16 +915,17 @@ namespace DubboNet.Clients
                 return await availableDubboActuatorInfo.Invocation.InvokeAsync(() =>
                 {
                     if (availableDubboActuatorInfo.AvailableDubboActuatorSuite is IDubboGenericInvocationActuator genericInvocationSuite)
-                        return genericInvocationSuite.SendQuery(invocation);
+                        return genericInvocationSuite.SendQuery(invocation, cancellationToken);
                     return availableDubboActuatorInfo.AvailableDubboActuatorSuite.SendQuery(
                         nowServiceName + availableDubboActuatorInfo.AvailableDubboActuatorSuite.ServiceFuncSpit + nowFuncName,
                         SerializeLegacyArguments(invocation.Arguments, availableDubboActuatorInfo.AvailableDubboActuatorSuite.ProtocolType));
-                }).ConfigureAwait(false);
+                }).WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             //没有_dubboDriverCollection没有目标服务，尝试添加服务节点 （新的ServiceName都会通过这里将节点添加进来）
             else if (availableDubboActuatorInfo.ResultType == AvailableDubboActuatorInfo.GetDubboActuatorSuiteResultType.NoDubboServiceDriver)
             {
-                DubboServiceEndPointInfos serviceEndPointsInfo = await DiscoverProvidersAsync(nowServiceName);
+                DubboServiceEndPointInfos serviceEndPointsInfo = await DiscoverProvidersAsync(nowServiceName)
+                    .WaitAsync(cancellationToken).ConfigureAwait(false);
                 if (serviceEndPointsInfo.ErrorInfo != null)
                 {
                     string tempErrorMes = $"[SendRequestAsync] GetSeviceProviderEndPoints fail {nowServiceName} -> {serviceEndPointsInfo.ErrorInfo}";
@@ -834,15 +939,17 @@ namespace DubboNet.Clients
                 }
                 else
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     _dubboDriverCollection.AddDubboServiceDriver(nowServiceName, serviceEndPointsInfo.EndPoints);
-                    return await QueryInternalAsync(funcEndPoint, req, invocation);
+                    return await QueryInternalAsync(funcEndPoint, req, invocation, cancellationToken).ConfigureAwait(false);
                 }
             }
             //没有获取到可用的DubboActuatorSuite，因为服务里的节点信息为空
             else if (availableDubboActuatorInfo.ResultType == AvailableDubboActuatorInfo.GetDubboActuatorSuiteResultType.NoActuatorInService)
             {
                 //实际上是有watch会自动更新，这里主动更新一次可以兼容watch异常的情况（这里会触发同一个路径注册2个watch，不过重复的watch只会触发一次）
-                DubboServiceEndPointInfos serviceEndPointsInfo = await DiscoverProvidersAsync(nowServiceName);
+                DubboServiceEndPointInfos serviceEndPointsInfo = await DiscoverProvidersAsync(nowServiceName)
+                    .WaitAsync(cancellationToken).ConfigureAwait(false);
                 string tempErrorMes = null;
                 if (serviceEndPointsInfo.ErrorInfo != null)
                 {
@@ -850,8 +957,9 @@ namespace DubboNet.Clients
                 }
                 else if (serviceEndPointsInfo.EndPoints.Count > 0)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     _dubboDriverCollection.AddDubboServiceDriver(nowServiceName, serviceEndPointsInfo.EndPoints);
-                    return await QueryInternalAsync(funcEndPoint, req, invocation);
+                    return await QueryInternalAsync(funcEndPoint, req, invocation, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -868,6 +976,9 @@ namespace DubboNet.Clients
             //没有获取到可用的DubboActuatorSuite，因为没有可用的DubboActuatorSuite（比如配置的资源耗尽）
             else if (availableDubboActuatorInfo.ResultType == AvailableDubboActuatorInfo.GetDubboActuatorSuiteResultType.NoAvailableActuator)
             {
+                if (_tripleWireMode == TripleWireMode.Hessian2Wrapper)
+                    return new DubboRequestResult { QuerySuccess = false, ServiceElapsed = -1,
+                        ErrorMeaasge = $"Binary Triple requires an eligible tri:// provider for {nowServiceName}; no protocol fallback was sent." };
                 if (requiredProtocol == DubboActuatorProtocolType.NativeDubbo)
                 {
                     return new DubboRequestResult()
@@ -904,6 +1015,10 @@ namespace DubboNet.Clients
             string methodName,
             DubboInvocation invocation)
         {
+            // Explicit binary mode is a requirement, not a speculative preference.
+            // $invoke carries the exact Java signature, so overloads can use Triple.
+            if (_tripleWireMode == TripleWireMode.Hessian2Wrapper)
+                return DubboActuatorProtocolType.Triple;
             try
             {
                 IReadOnlyList<DubboMethodMetadata> methods =

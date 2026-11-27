@@ -33,6 +33,7 @@ namespace DubboNet.DubboService.Native
         // by the same limit; chunk sequences are concatenation, not nesting.
         internal const int MaxNestingDepth = 64;
         private int _depth;
+        private int _remainingValues;
         private sealed class ClassDefinition
         {
             public string TypeName { get; set; }
@@ -40,6 +41,7 @@ namespace DubboNet.DubboService.Native
         }
 
         private readonly Hessian2ByteCursor _byteCursor;
+        internal int Remaining => _byteCursor.Remaining;
         private readonly List<object> _references = new List<object>();
         private readonly List<string> _typeReferences = new List<string>();
         private readonly List<ClassDefinition> _classDefinitions = new List<ClassDefinition>();
@@ -49,8 +51,14 @@ namespace DubboNet.DubboService.Native
         /// <para>EN: Creates a reader for the supplied Hessian2 payload.</para>
         /// </summary>
         public DubboHessian2Reader(byte[] buffer)
+            : this(buffer, int.MaxValue)
+        {
+        }
+
+        internal DubboHessian2Reader(byte[] buffer, int maximumValues)
         {
             _byteCursor = new Hessian2ByteCursor(buffer);
+            _remainingValues = maximumValues;
         }
 
         /// <summary>
@@ -77,6 +85,8 @@ namespace DubboNet.DubboService.Native
         /// </summary>
         public object ReadValue()
         {
+            if (_remainingValues-- <= 0)
+                throw new InvalidDataException("Hessian2 decoded value count exceeds the configured limit.");
             if (_depth >= MaxNestingDepth)
                 throw new InvalidDataException($"Hessian2 wire nesting exceeds the limit of {MaxNestingDepth} levels.");
             _depth++;
@@ -262,6 +272,8 @@ namespace DubboNet.DubboService.Native
                 throw new InvalidDataException(
                     $"Hessian2 declared count {count} exceeds the {remaining} remaining payload bytes.");
             }
+            if (count > _remainingValues)
+                throw new InvalidDataException("Hessian2 declared count exceeds the decoded-value limit.");
         }
 
         private string ReadType()
