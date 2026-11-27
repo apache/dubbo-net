@@ -18,6 +18,7 @@
 using System;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using MyCommonHelper;
@@ -31,6 +32,8 @@ namespace DubboNet.Compatibility
             typeof(HttpRequestMessage).GetProperty("VersionPolicy");
         private static readonly object ExactVersionPolicy = VersionPolicy == null ? null :
             Enum.Parse(VersionPolicy.PropertyType, "RequestVersionExact");
+        private static readonly System.Reflection.PropertyInfo TrailingHeaders =
+            typeof(HttpResponseMessage).GetProperty("TrailingHeaders");
 
         // Bind once, avoiding reflection per body read. A Standard DLL hosted by
         // modern .NET must still pass cancellation to custom HttpContent overrides.
@@ -39,8 +42,11 @@ namespace DubboNet.Compatibility
                 .GetMethod("ReadAsStringAsync", new[] { typeof(CancellationToken) })
                 ?.CreateDelegate(typeof(Func<HttpContent, CancellationToken, Task<string>>));
 #endif
-        internal static HttpMessageHandler CreateHandler(int maximumConnections, TimeSpan idleTimeout)
+        internal static HttpMessageHandler CreateHandler(int maximumConnections, TimeSpan idleTimeout,
+            bool binaryTriple = false)
         {
+            // Binary RPC metadata belongs to one call. Do not store cookies for
+            // later calls or follow redirects that can resend the request body.
 #if NETSTANDARD2_0
             // Standard is an API contract, not a runtime. Light up the SAME pool
             // implementation when the Standard DLL runs on modern .NET (including
@@ -53,27 +59,39 @@ namespace DubboNet.Compatibility
                 {
                     socketsType.GetProperty("MaxConnectionsPerServer").SetValue(handler, maximumConnections);
                     socketsType.GetProperty("PooledConnectionIdleTimeout").SetValue(handler, idleTimeout);
+                    if (binaryTriple)
+                    {
+                        socketsType.GetProperty("UseCookies").SetValue(handler, false);
+                        socketsType.GetProperty("AllowAutoRedirect").SetValue(handler, false);
+                    }
                     return handler;
                 }
                 catch { handler.Dispose(); throw; }
             }
-            return CreateLegacyHandler(maximumConnections);
+            return CreateLegacyHandler(maximumConnections, binaryTriple);
 #else
             return new SocketsHttpHandler
             {
                 MaxConnectionsPerServer = maximumConnections,
-                PooledConnectionIdleTimeout = idleTimeout
+                PooledConnectionIdleTimeout = idleTimeout,
+                UseCookies = !binaryTriple,
+                AllowAutoRedirect = !binaryTriple
             };
 #endif
         }
 
-        internal static HttpMessageHandler CreateLegacyHandler(int maximumConnections)
+        internal static HttpMessageHandler CreateLegacyHandler(int maximumConnections, bool binaryTriple = false)
         {
             // Framework has no per-handler idle eviction setting. Do not change
             // process-wide ServicePointManager/TLS settings to emulate one.
             MyLogger.LogWarning("Legacy HTTP handler: Triple pool idle eviction follows the runtime defaults; " +
                 "MasterConnectionAliveTime cannot be applied per handler on this runtime.");
-            return new HttpClientHandler { MaxConnectionsPerServer = maximumConnections };
+            return new HttpClientHandler
+            {
+                MaxConnectionsPerServer = maximumConnections,
+                UseCookies = !binaryTriple,
+                AllowAutoRedirect = !binaryTriple
+            };
         }
 
         internal static void SetHttp11Exact(HttpRequestMessage request)
@@ -85,6 +103,32 @@ namespace DubboNet.Compatibility
             VersionPolicy?.SetValue(request, ExactVersionPolicy);
 #else
             request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+#endif
+        }
+
+        internal static void SetHttp2Exact(HttpRequestMessage request)
+        {
+#if NETSTANDARD2_0
+            // Standard 2.0 is not a runtime capability. Bind modern APIs only
+            // here so its DLL works on .NET 6+, and fail before sending on legacy
+            // hosts instead of silently downgrading a binary RPC to HTTP/1.1.
+            if (VersionPolicy == null || TrailingHeaders == null)
+                throw new PlatformNotSupportedException("Binary Triple requires a modern HTTP/2 handler and trailers support (.NET 6 or later is tested).");
+            request.Version = new Version(2, 0);
+            VersionPolicy.SetValue(request, ExactVersionPolicy);
+#else
+            request.Version = HttpVersion.Version20;
+            request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+#endif
+        }
+
+        internal static HttpHeaders GetTrailingHeaders(HttpResponseMessage response)
+        {
+#if NETSTANDARD2_0
+            return (HttpHeaders)TrailingHeaders?.GetValue(response)
+                ?? throw new PlatformNotSupportedException("Binary Triple requires HTTP response trailers support.");
+#else
+            return response.TrailingHeaders;
 #endif
         }
 

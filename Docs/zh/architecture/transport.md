@@ -8,12 +8,12 @@
 
 ## 从选择到协议执行器
 
-`DubboClient.QueryInternalAsync` 在选中执行器后，通过 `LoadBalancedInvocation.InvokeAsync` 包裹发送。支持结构化调用的执行器接收 `IDubboGenericInvocationActuator.SendQuery(invocation)`；旧接口则接收序列化后的参数和方法路径。无论返回成功还是失败，外层都会完成调用统计并归还本次预留。
+`DubboClient.QueryInternalAsync` 选中执行器后，通过 `LoadBalancedInvocation.InvokeAsync` 包裹发送。结构化执行器接收 `IDubboGenericInvocationActuator.SendQuery(invocation, cancellationToken)`；旧接口接收序列化参数及方法路径。实际发送结束后完成统计并归还预留；取消外部等待不会提前释放仍在途的预留。
 
 | 协议 | 执行器负责的工作 | 细节 |
 | --- | --- | --- |
 | `dubbo://` | `NativeDubboActuatorSuite` 管理 TCP 连接、Hessian2 请求编码与响应处理。 | [原生 Dubbo 协议](../protocols/native-dubbo.md) |
-| `tri://` | `TripleDubboActuatorSuite` 处理 Java Interface Unary HTTP/JSON 请求、响应及超时和取消。 | [Triple 协议](../protocols/triple.md) |
+| `tri://` | `TripleDubboActuatorSuite` 处理默认 HTTP/JSON 或显式 Java Unary HTTP/2 wrapper/Hessian2、期限、状态/trailers 和取消。 | [Triple 协议](../protocols/triple.md) |
 
 正常注册发现只把 `dubbo://` 和 `tri://` 地址转为 Provider 端点。Driver 对其他 scheme 的 Telnet 回退与[元数据](metadata.md)读取定义时短时使用的 Telnet `ls -l` 不是同一条业务传输路径。
 
@@ -29,4 +29,7 @@
 | --- | --- |
 | `NativeDubboActuatorSuite.cs` | 原生 Dubbo 请求、响应及连接生命周期。 |
 | `TripleDubboActuatorSuite.cs` | Triple 请求、响应、取消和 HTTP 连接资源。 |
+| [BinaryTripleTransport.cs](../../../DubboService/Triple/BinaryTripleTransport.cs) | HTTP/2 单次请求/响应、metadata、RPC 状态及 Java 异常标记。 |
+| [TripleUnaryFraming.cs](../../../DubboService/Triple/TripleUnaryFraming.cs) | 有界五字节前缀消息、分片读取及 Unary 消息数量检查。 |
+| [Hessian2WrapperCodec.cs](../../../DubboService/Triple/Hessian2WrapperCodec.cs) | Apache 固定包装与 Java 泛化参数编码。 |
 | `LoadBalancedInvocation.cs` | 传输调用外层的统计与预留归还。 |

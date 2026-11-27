@@ -41,7 +41,8 @@ internal static class Program
             await NativeRoundTrip();
             await TripleRoundTrip(false);
             await TripleRoundTrip(true);
-            Console.WriteLine("PASS: " + actual + "; Native Hessian2, Triple HTTP/JSON, stalled-body deadline.");
+            await BinaryTriplePackageSmoke.Run();
+            Console.WriteLine("PASS: " + actual + "; Native Hessian2, Triple HTTP/JSON, stalled-body deadline, binary Triple capability.");
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }

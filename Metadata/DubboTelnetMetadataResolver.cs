@@ -17,11 +17,11 @@
 
 using DubboNet.Clients.DataModle;
 using DubboNet.DubboService;
+using DubboNet.DubboService.DataModle;
 using MyCommonHelper;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -269,7 +269,7 @@ namespace DubboNet.Metadata
                 // Some Telnet extensions include a modifier (for example "public") while the
                 // stock Dubbo handler prints only the return type. Extract the last declaration
                 // token without treating whitespace inside generic arguments as a separator.
-                string returnType = EraseGenericArguments(
+                string returnType = JavaTypeName.EraseGenericArguments(
                     ExtractDeclaredType(returnDeclaration));
                 if (string.IsNullOrWhiteSpace(returnType))
                 {
@@ -337,7 +337,7 @@ namespace DubboNet.Metadata
 
         private static void AddParameter(List<string> parameters, string value)
         {
-            string parameter = EraseGenericArguments(value);
+            string parameter = JavaTypeName.EraseGenericArguments(value);
             if (!string.IsNullOrWhiteSpace(parameter))
             {
                 parameters.Add(parameter.EndsWith("...", StringComparison.Ordinal)
@@ -375,39 +375,6 @@ namespace DubboNet.Metadata
             }
 
             return declaration.Substring(lastSeparator + 1).Trim();
-        }
-
-        /// <summary>
-        /// <c>GenericService.$invoke</c> 需要 JVM 可加载的擦除类名，因此移除 Telnet 输出中的源码风格泛型参数。
-        /// <para>EN: <c>GenericService.$invoke</c> requires JVM-loadable erased class names, so source-style generic arguments from Telnet output are removed.</para>
-        /// </summary>
-        private static string EraseGenericArguments(string declaration)
-        {
-            if (string.IsNullOrWhiteSpace(declaration))
-            {
-                return null;
-            }
-
-            StringBuilder erased = new StringBuilder(declaration.Length);
-            int genericDepth = 0;
-            foreach (char character in declaration.Trim())
-            {
-                if (character == '<')
-                {
-                    genericDepth++;
-                    continue;
-                }
-                if (character == '>')
-                {
-                    genericDepth = Math.Max(0, genericDepth - 1);
-                    continue;
-                }
-                if (genericDepth == 0)
-                {
-                    erased.Append(character);
-                }
-            }
-            return erased.ToString().Trim();
         }
 
         private static IReadOnlyDictionary<string, string> BuildServiceParameters(

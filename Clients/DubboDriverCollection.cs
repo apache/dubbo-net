@@ -43,6 +43,21 @@ namespace DubboNet.Clients
         /// </summary>
         internal class DubboDriverCollectionConf
         {
+            /// <summary>
+            /// Triple 调用模式，默认 HTTP/JSON；由客户端配置传入并继续传给服务驱动。
+            /// EN: Triple wire mode, defaulting to HTTP/JSON; forwarded from client configuration to service drivers.
+            /// </summary>
+            public TripleWireMode TripleWireMode { get; set; }
+            /// <summary>
+            /// 二进制 Triple 单条收发 wrapper 消息的字节上限，默认 8 MiB，不包含五字节帧前缀；仅二进制模式生效。
+            /// EN: Maximum sent/received binary Triple wrapper size in bytes, excluding the five-byte frame prefix; defaults to 8 MiB and applies only to binary mode.
+            /// </summary>
+            public int TripleMaxMessageBytes { get; set; } = 8 * 1024 * 1024;
+            /// <summary>
+            /// Triple 是否使用 HTTPS，默认 false（明文 HTTP）；启用后由运行时正常验证服务器证书。
+            /// EN: Whether Triple uses HTTPS; defaults to false (plaintext HTTP). Normal runtime server-certificate validation applies when enabled.
+            /// </summary>
+            public bool TripleUseTls { get; set; }
             /// <summary>Triple 与 Telnet Provider 的最大连接数；Native 不使用。EN: Maximum connections for Triple and Telnet providers; ignored by Native.</summary>
             public int DubboActuatorSuiteMaxConnections { get; set; } = 20;
             /// <summary>Telnet 辅助连接的空闲存活时间，单位秒。EN: Idle lifetime of Telnet auxiliary connections, in seconds.</summary>
@@ -148,7 +163,10 @@ namespace DubboNet.Clients
                         DubboActuatorSuiteAssistConnectionAliveTime = _innerDubboDriverCollectionConf.DubboActuatorSuiteAssistConnectionAliveTime,
                         DubboActuatorSuiteMasterConnectionAliveTime = _innerDubboDriverCollectionConf.DubboActuatorSuiteMasterConnectionAliveTime,
                         DubboActuatorSuiteMaxConnections = _innerDubboDriverCollectionConf.DubboActuatorSuiteMaxConnections,
-                        DubboRequestTimeout = _innerDubboDriverCollectionConf.DubboRequestTimeout
+                        DubboRequestTimeout = _innerDubboDriverCollectionConf.DubboRequestTimeout,
+                        TripleWireMode = _innerDubboDriverCollectionConf.TripleWireMode,
+                        TripleMaxMessageBytes = _innerDubboDriverCollectionConf.TripleMaxMessageBytes,
+                        TripleUseTls = _innerDubboDriverCollectionConf.TripleUseTls
                     });
                 //_dubboServiceDriverCollection.Add(serviceName, tempDubboServiceDriver);
                 _dubboServiceDriverCollection.TryAdd(serviceName, tempDubboServiceDriver);

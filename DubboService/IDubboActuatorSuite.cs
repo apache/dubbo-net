@@ -54,8 +54,8 @@ namespace DubboNet.DubboService
         /// </summary>
         NativeDubbo,
         /// <summary>
-        /// 使用 HTTP 和 JSON 编码的 Dubbo Triple Java 接口一元调用。
-        /// EN: Dubbo Triple Java-interface unary invocation over HTTP with JSON encoding.
+        /// Dubbo Triple Java 接口一元调用（HTTP/JSON 或二进制 wrapper）。
+        /// EN: Dubbo Triple Java-interface unary invocation (HTTP/JSON or binary wrappers).
         /// </summary>
         Triple
     }

@@ -70,6 +70,15 @@ namespace DubboNet.DubboService.DataModle
         /// </summary>
         public IReadOnlyDictionary<string, string> Attachments { get; set; }
 
+        // Monotonic, call-scoped deadline on a private client clone. It is not a
+        // public wire attachment and never mutates a caller's reusable invocation.
+        internal long? DeadlineTimestamp { get; set; }
+
+        // Only a private client's binary hash invocation stores prepared bytes.
+        // The transport reuses this snapshot; caller-owned reusable invocations
+        // and directly constructed actuator invocations are never mutated.
+        internal byte[] PreparedTripleWrapper { get; set; }
+
         /// <summary>
         /// 初始化一个空的 Dubbo 泛化调用描述。
         /// EN: Initializes an empty Dubbo generic invocation descriptor.

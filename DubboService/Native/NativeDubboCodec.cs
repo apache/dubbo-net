@@ -26,8 +26,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.Encodings.Web;
 using System.Text.Unicode;
+using System.Threading;
 
 namespace DubboNet.DubboService.Native
 {
@@ -152,16 +154,7 @@ namespace DubboNet.DubboService.Native
 
             string effectiveVersion = invocation.Version ?? serviceVersion;
             string effectiveGroup = invocation.Group ?? group;
-            object[] arguments = new object[invocation.Arguments.Count];
-            Dictionary<object, object> normalizedReferences =
-                new Dictionary<object, object>(ReferenceIdentityComparer.Instance);
-            for (int i = 0; i < arguments.Length; i++)
-            {
-                object prepared = PrepareArgument(
-                    invocation.Arguments[i],
-                    invocation.ParameterTypes[i]);
-                arguments[i] = NormalizeHessianArgument(prepared, normalizedReferences);
-            }
+            object[] arguments = PrepareGenericArguments(invocation.Arguments, invocation.ParameterTypes);
 
             output.WriteString(ProtocolVersion);
             output.WriteString(invocation.Service);
@@ -178,6 +171,39 @@ namespace DubboNet.DubboService.Native
                 timeoutMilliseconds));
 
             return stream.ToArray();
+        }
+
+        // Shared Java generic-value preparation, NOT a shared wire envelope.
+        // Triple writes each wrapper argument into a fresh Hessian stream.
+        internal static object[] PrepareGenericArguments(IReadOnlyList<object> values, IReadOnlyList<string> parameterTypes,
+            CancellationToken token = default, bool boundTraversal = false)
+        {
+            object[] arguments = new object[values.Count];
+            var preparation = boundTraversal || token.CanBeCanceled
+                ? new ArgumentPreparation(token, boundTraversal) : null;
+            Dictionary<object, object> normalizedReferences =
+                new Dictionary<object, object>(ReferenceIdentityComparer.Instance);
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                token.ThrowIfCancellationRequested();
+                object prepared = PrepareArgument(
+                    values[i], parameterTypes[i], preparation);
+                arguments[i] = NormalizeHessianArgument(prepared, normalizedReferences, preparation);
+            }
+
+            return arguments;
+        }
+
+        internal static object DecodeStandaloneHessianValue(byte[] payload)
+        {
+            // Match Native's payload-sized expansion budget. The Standard and
+            // modern Triple paths must not retain the old fixed 100k-node cap.
+            var budget = new NormalizationBudget(payload.Length);
+            var input = new DubboHessian2Reader(payload, budget.NodeLimit);
+            object value = ToJsonCompatible(input.ReadValue(), budget);
+            if (input.Remaining != 0)
+                throw new InvalidDataException("Unexpected bytes after the Triple Hessian2 value.");
+            return value;
         }
 
         /// <summary>
@@ -388,15 +414,17 @@ namespace DubboNet.DubboService.Native
                 ?? new Dictionary<string, object>();
         }
 
-        private static object PrepareArgument(object value, string javaType)
+        private static object PrepareArgument(object value, string javaType, ArgumentPreparation preparation = null)
         {
+            bool projectedJson = false;
             if (value is JsonDocument document)
             {
                 value = document.RootElement;
             }
             if (value is JsonElement element)
             {
-                value = FromJsonElement(element, javaType);
+                value = FromJsonElement(element, javaType, preparation);
+                projectedJson = true;
             }
 
             switch (javaType)
@@ -424,22 +452,33 @@ namespace DubboNet.DubboService.Native
                 case "java.lang.String":
                     return value?.ToString();
                 default:
-                    if (value != null && value is not string && IsPojoType(javaType))
+                    // Enumerable JSON would be discarded below, after consuming
+                    // the original sequence. Inspect its serializer shape instead;
+                    // dictionaries and custom converters still keep POJO projection.
+                    // JsonTypeInfoKind is available in our Standard JSON 8 dependency
+                    // as well as the .NET 8/10 shared frameworks.
+                    if (!projectedJson && value != null && value is not string && IsPojoType(javaType)
+                        && (value is not IEnumerable
+                            || JsonSerializerOptions.Default.GetTypeInfo(value.GetType()).Kind != JsonTypeInfoKind.Enumerable))
                     {
                         JsonElement serialized = JsonSerializer.SerializeToElement(
                             value,
                             ArgumentJsonOptions);
                         if (serialized.ValueKind == JsonValueKind.Object)
                         {
-                            return FromJsonElement(serialized, javaType);
+                            return FromJsonElement(serialized, javaType, preparation);
                         }
                     }
                     return AddPojoClass(value, javaType);
             }
         }
 
-        private static object FromJsonElement(JsonElement element, string javaType = null)
+        private static object FromJsonElement(JsonElement element, string javaType = null,
+            ArgumentPreparation preparation = null, int depth = 1)
         {
+            // Check before cloning children: callers may supply JsonElements
+            // parsed with a much larger MaxDepth than our request wire limit.
+            preparation?.VisitProjection(depth);
             switch (element.ValueKind)
             {
                 case JsonValueKind.Null:
@@ -471,13 +510,14 @@ namespace DubboNet.DubboService.Native
                     return element.GetDouble();
                 case JsonValueKind.Array:
                     return element.EnumerateArray()
-                        .Select(item => FromJsonElement(item))
+                        .Select(item => FromJsonElement(item, preparation: preparation, depth: depth + 1))
                         .ToArray();
                 case JsonValueKind.Object:
                     Dictionary<string, object> map = new Dictionary<string, object>(StringComparer.Ordinal);
                     foreach (JsonProperty property in element.EnumerateObject())
                     {
-                        map[property.Name] = FromJsonElement(property.Value);
+                        preparation?.VisitProjection(depth + 1); // Map key.
+                        map[property.Name] = FromJsonElement(property.Value, preparation: preparation, depth: depth + 1);
                     }
                     return AddPojoClass(map, javaType);
                 default:
@@ -487,8 +527,13 @@ namespace DubboNet.DubboService.Native
 
         private static object NormalizeHessianArgument(
             object value,
-            Dictionary<object, object> normalizedReferences)
+            Dictionary<object, object> normalizedReferences,
+            ArgumentPreparation preparation,
+            int depth = 1)
         {
+            // Count the generic Object[] as level zero. Keep binary requests
+            // within the same wire-depth envelope as the Hessian reader.
+            preparation?.Visit(depth);
             if (value == null
                 || value is string
                 || value is bool
@@ -548,14 +593,14 @@ namespace DubboNet.DubboService.Native
             if (value is JsonDocument document)
             {
                 return NormalizeHessianArgument(
-                    FromJsonElement(document.RootElement),
-                    normalizedReferences);
+                    FromJsonElement(document.RootElement, preparation: preparation, depth: depth),
+                    normalizedReferences, preparation, depth);
             }
             if (value is JsonElement element)
             {
                 return NormalizeHessianArgument(
-                    FromJsonElement(element),
-                    normalizedReferences);
+                    FromJsonElement(element, preparation: preparation, depth: depth),
+                    normalizedReferences, preparation, depth);
             }
 
             if (normalizedReferences.TryGetValue(value, out object existing))
@@ -570,7 +615,7 @@ namespace DubboNet.DubboService.Native
                 normalizedReferences[value] = normalized;
                 foreach (DictionaryEntry entry in dictionary)
                 {
-                    object key = NormalizeHessianArgument(entry.Key, normalizedReferences);
+                    object key = NormalizeHessianArgument(entry.Key, normalizedReferences, preparation, depth + 1);
                     if (key == null)
                     {
                         throw new ArgumentException(
@@ -579,7 +624,7 @@ namespace DubboNet.DubboService.Native
                     }
                     normalized[key] = NormalizeHessianArgument(
                         entry.Value,
-                        normalizedReferences);
+                        normalizedReferences, preparation, depth + 1);
                 }
                 return normalized;
             }
@@ -590,7 +635,7 @@ namespace DubboNet.DubboService.Native
                 normalizedReferences[value] = normalized;
                 foreach (object item in enumerable)
                 {
-                    normalized.Add(NormalizeHessianArgument(item, normalizedReferences));
+                    normalized.Add(NormalizeHessianArgument(item, normalizedReferences, preparation, depth + 1));
                 }
                 return normalized;
             }
@@ -598,12 +643,45 @@ namespace DubboNet.DubboService.Native
             JsonElement serialized = JsonSerializer.SerializeToElement(
                 value,
                 ArgumentJsonOptions);
-            object normalizedPojo = FromJsonElement(serialized);
+            object normalizedPojo = FromJsonElement(serialized, preparation: preparation, depth: depth);
             object normalizedValue = NormalizeHessianArgument(
                 normalizedPojo,
-                normalizedReferences);
+                normalizedReferences, preparation, depth);
             normalizedReferences[value] = normalizedValue;
             return normalizedValue;
+        }
+
+        // Binary preparation must not depend on an incidental JSON pass for
+        // traversal bounds. Legacy Native calls retain their existing policy.
+        private sealed class ArgumentPreparation
+        {
+            private readonly CancellationToken _token;
+            private readonly bool _bounded;
+            private int _values;
+            private int _projectionValues;
+            internal ArgumentPreparation(CancellationToken token, bool bounded)
+            { _token = token; _bounded = bounded; }
+            internal void Visit(int depth)
+            {
+                CheckDepth(depth);
+                if (!_bounded) return;
+                if (++_values > MaxNormalizedNodes)
+                    throw new InvalidDataException($"Binary Triple request traversal exceeds {MaxNormalizedNodes} values.");
+            }
+            internal void VisitProjection(int depth)
+            {
+                CheckDepth(depth);
+                // Keep JSON projection and Hessian normalization bounded without
+                // charging the same logical tree twice against one node counter.
+                if (_bounded && ++_projectionValues > MaxNormalizedNodes)
+                    throw new InvalidDataException($"Binary Triple request traversal exceeds {MaxNormalizedNodes} values during JSON projection.");
+            }
+            private void CheckDepth(int depth)
+            {
+                _token.ThrowIfCancellationRequested();
+                if (_bounded && depth >= DubboHessian2Reader.MaxNestingDepth)
+                    throw new InvalidDataException($"Binary Triple request nesting exceeds {DubboHessian2Reader.MaxNestingDepth} levels including the generic argument array.");
+            }
         }
 
         private static object AddPojoClass(object value, string javaType)
@@ -620,8 +698,12 @@ namespace DubboNet.DubboService.Native
 
         private static bool IsPojoType(string javaType)
         {
-            if (string.IsNullOrWhiteSpace(javaType) || javaType.StartsWith("[", StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(javaType) || javaType.StartsWith("[", StringComparison.Ordinal)
+                || javaType.EndsWith("[]", StringComparison.Ordinal))
             {
+                // Source-style arrays are collections, just like JVM descriptors.
+                // Reflecting them as POJOs would enumerate and discard a JSON copy
+                // before Hessian traverses the original sequence a second time.
                 return false;
             }
             return javaType != "java.lang.Object"
@@ -725,6 +807,7 @@ namespace DubboNet.DubboService.Native
         private sealed class NormalizationBudget
         {
             private readonly int _nodeLimit;
+            internal int NodeLimit => _nodeLimit;
             private readonly long _jsonByteLimit;
             private int _nodes;
             private long _jsonBytes;

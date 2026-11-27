@@ -19,7 +19,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Unicode;
 using System.Threading.Tasks;
 using MyCommonHelper;
 
@@ -39,6 +42,15 @@ namespace DubboNet.DubboService.DataModle
         private const string _dubboResultSpit_result = "result: ";
         private const string _dubboResultSpit_elapsed = "\nelapsed: ";
         private const string _dubboResultSpit_ms = " ms.";
+
+        // Hessian 可携带非有限浮点数。文本结果与强类型读取共用同一规则。
+        // EN: Hessian supports non-finite floats. The JSON result and typed reader
+        // share the same representation for those values.
+        internal static readonly JsonSerializerOptions BinaryTripleJsonOptions = new JsonSerializerOptions
+        {
+            Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
+            NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
+        };
 
         /// <summary>
         /// DubboRequestResult对象创建时间
@@ -89,6 +101,21 @@ namespace DubboNet.DubboService.DataModle
         /// EN: Gets the serialization id carried by the Dubbo frame; Hessian2 uses id 2.
         /// </summary>
         public byte? SerializationId { get; internal set; }
+
+        /// <summary>二进制 Triple 的 gRPC 状态码；其他传输为 null。
+        /// EN: gRPC status code for binary Triple, or null for other transports.</summary>
+        public int? GrpcStatusCode { get; internal set; }
+
+        /// <summary>Triple Java 包装异常代码；非零表示 Java 异常，即使 grpc-status 为 0。
+        /// EN: Triple Java wrapped-exception code; nonzero indicates a Java exception even when grpc-status is zero.</summary>
+        public int? TripleExceptionCode { get; internal set; }
+
+        /// <summary>Triple 实际响应的 HTTP 版本。EN: Actual HTTP response version for Triple.</summary>
+        public Version ResponseHttpVersion { get; internal set; }
+
+        /// <summary>二进制 Triple 的尾部元数据；二进制值保留为 Base64 字符串。
+        /// EN: Binary Triple trailing metadata; binary values are preserved as Base64 strings.</summary>
+        public IReadOnlyDictionary<string, object> ResponseTrailers { get; internal set; }
 
         /// <summary>
         /// 获取响应值转换为 Result JSON 前的动态反序列化对象。
@@ -229,7 +256,8 @@ namespace DubboNet.DubboService.DataModle
                     {
                         try
                         {
-                            _resultModle = JsonSerializer.Deserialize<T>(Result);
+                            _resultModle = JsonSerializer.Deserialize<T>(Result,
+                                GrpcStatusCode.HasValue ? BinaryTripleJsonOptions : null);
                         }
                         catch (Exception ex)
                         {
@@ -268,6 +296,10 @@ namespace DubboNet.DubboService.DataModle
             RequestId = sourceDubboRequestResult?.RequestId;
             ResponseStatus = sourceDubboRequestResult?.ResponseStatus;
             SerializationId = sourceDubboRequestResult?.SerializationId;
+            GrpcStatusCode = sourceDubboRequestResult?.GrpcStatusCode;
+            TripleExceptionCode = sourceDubboRequestResult?.TripleExceptionCode;
+            ResponseHttpVersion = sourceDubboRequestResult?.ResponseHttpVersion;
+            ResponseTrailers = sourceDubboRequestResult?.ResponseTrailers;
             RawResult = sourceDubboRequestResult?.RawResult;
             ResponseAttachments = sourceDubboRequestResult?.ResponseAttachments;
             ServiceElapsedAvailable = sourceDubboRequestResult?.ServiceElapsedAvailable ?? true;

@@ -35,6 +35,21 @@ namespace DubboNet.Clients
     {
         internal class DubboServiceDriverConf
         {
+            /// <summary>
+            /// Triple 调用模式，默认 HTTP/JSON；由驱动集合传入并继续传给 Provider 执行器。
+            /// EN: Triple wire mode, defaulting to HTTP/JSON; forwarded from the driver collection to provider actuators.
+            /// </summary>
+            public TripleWireMode TripleWireMode { get; set; }
+            /// <summary>
+            /// 二进制 Triple 单条收发 wrapper 消息的字节上限，默认 8 MiB，不包含五字节帧前缀；仅二进制模式生效。
+            /// EN: Maximum sent/received binary Triple wrapper size in bytes, excluding the five-byte frame prefix; defaults to 8 MiB and applies only to binary mode.
+            /// </summary>
+            public int TripleMaxMessageBytes { get; set; } = 8 * 1024 * 1024;
+            /// <summary>
+            /// Triple 是否使用 HTTPS，默认 false（明文 HTTP）；启用后由运行时正常验证服务器证书。
+            /// EN: Whether Triple uses HTTPS; defaults to false (plaintext HTTP). Normal runtime server-certificate validation applies when enabled.
+            /// </summary>
+            public bool TripleUseTls { get; set; }
             public int DubboActuatorSuiteMaxConnections { get; set; } = 20;
             public int DubboActuatorSuiteAssistConnectionAliveTime { get; set; } = 60 * 5;
             public int DubboActuatorSuiteMasterConnectionAliveTime { get; set; } = 60 * 20;
@@ -123,7 +138,10 @@ namespace DubboNet.Clients
                 AssistConnectionAliveTime = _configuration.DubboActuatorSuiteAssistConnectionAliveTime,
                 MasterConnectionAliveTime = _configuration.DubboActuatorSuiteMasterConnectionAliveTime,
                 DubboRequestTimeout = _configuration.DubboRequestTimeout,
-                MaxConnections = _configuration.DubboActuatorSuiteMaxConnections
+                MaxConnections = _configuration.DubboActuatorSuiteMaxConnections,
+                TripleWireMode = _configuration.TripleWireMode,
+                TripleMaxMessageBytes = _configuration.TripleMaxMessageBytes,
+                TripleUseTls = _configuration.TripleUseTls
             };
             if (string.Equals(endpoint.Scheme, ProviderProtocolSchemes.Dubbo, StringComparison.OrdinalIgnoreCase))
                 return new NativeDubboActuatorSuite(endpoint.EndPoint, options);

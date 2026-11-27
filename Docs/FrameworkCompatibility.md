@@ -123,8 +123,10 @@ is therefore **not claimed**, nor is Framework + ZooKeeper certified by the
 Native/Triple loopback smoke job. Test the application's exact registry/runtime/OS
 before rollout.
 
-This Nacos gRPC restriction is separate from DubboNet's Triple transport:
-Triple here is Java-interface unary **HTTP/1.1 JSON**, not framed gRPC.
+This Nacos gRPC restriction is separate from DubboNet's Triple transport. Default
+Triple remains Java-interface unary HTTP/1.1 JSON. Explicit binary Java wrappers
+use HTTP/2 and trailers on modern hosts; the current implementation rejects legacy
+Framework handlers before sending. See the [binary Triple contract](en/protocols/triple.md#explicit-binary-mode).
 
 References: [Microsoft .NET Standard guidance](https://learn.microsoft.com/en-us/dotnet/standard/net-standard),
 [Microsoft gRPC supported platforms](https://learn.microsoft.com/en-us/aspnet/core/grpc/netstandard?view=aspnetcore-10.0),
@@ -208,6 +210,9 @@ See [NuGet source-mapping behavior](https://learn.microsoft.com/en-us/nuget/cons
 
 Each package smoke verifies selected asset identity, Native Hessian2 and Triple
 HTTP/JSON round trips, and a stalled HTTP body deadline, all against loopback.
+Modern hosts additionally execute a real HTTP/2 binary-wrapper round trip;
+Framework verifies the explicit unsupported-platform result. Kestrel is a
+test-only framework reference, not a dependency of the core package.
 The Windows job must execute successfully before claiming Framework runtime
 validation; cross-compiling net48 on macOS is not execution.
 
@@ -290,3 +295,191 @@ loopback connection.
   public/protected declarations**, with no public API differences.
 
 These are local results; the updated commit must also pass its GitHub checks.
+
+### Binary Triple Unary validation (2026-11-21)
+
+Phase one adds Java-interface generic `$invoke`, fixed Triple Protobuf wrappers
+and Hessian2 over HTTP/2. It does not add user Protobuf/IDL contracts or streaming.
+HTTP/JSON remains the default; binary mode is an explicit construction option.
+
+Local verification on macOS arm64, SDK 10.0.201:
+
+| Verification | Library asset / host | Result |
+| --- | --- | --- |
+| Full unit suite | net8/net8, net10/net10, Standard/net8, Standard/net10 | 693 passed per combination, no failures or skips |
+| Full Provider-method E2E | net10/net10, Standard/net6, net8/net8, Standard/net8, Standard/net10 | 206 passed per combination, no failures or skips |
+| Real packed NuGet smoke | Standard/net6, net8/net8, net10/net10 | Native, HTTP/JSON, body deadline and real binary HTTP/2 round trips passed |
+| Solution restore/build | All solution projects, Release | Passed, including Framework 4.8 cross-compilation |
+| Java wrapper/Hessian contract | Apache Dubbo 3.3.6 fixture | Independent golden-byte test passed |
+
+E2E retains the existing 156 cases and adds 50 cases: all 25 Java 3.3.6 methods
+through each of ZooKeeper and Nacos. Binary cases assert HTTP/2 and a gRPC status;
+Native or HTTP/JSON cannot accidentally satisfy them. Temporary local Java
+Providers/ZooKeeper and an explicitly supplied Nacos registry were used, with
+unique registry groups and sequential host runs. No remote addresses are defaulted
+in source. The 3.3.6 fixture is the current binary interoperability boundary;
+older versions remain covered for their existing transports.
+
+Loopback HTTP/2 tests additionally verify cancellation of one stream while
+concurrent/later calls use the same connection, stalled-body deadlines, interrupted
+responses without RPC replay, TLS with a fixture-only certificate trust callback,
+all six load-balancing modes filtering to Triple, malformed/bounded frames and
+metadata, Java wrapped exceptions, and typed-result metadata preservation.
+
+The full end-to-end workflow runs these cases on its existing .NET 6/8/10 and
+forced-Standard paths. The Java build now also runs the golden-byte test. Existing
+workflow triggers and required job names are unchanged. Windows Framework runtime
+execution and Docker/GitHub workflows were not run locally; their checks are still
+required. Framework binary mode is explicitly unsupported and its Windows smoke
+checks that capability result while retaining Native/HTTP-JSON coverage.
+
+### Main synchronization follow-up (2026-11-27)
+
+The Triple work was reapplied onto Apache main `4e3741e`, including metadata/registry
+ownership separation (#36), payload-sized Hessian expansion budgets (#43), and
+the Java setup Action update (#46). Client calls now use the extracted metadata
+resolver and Provider discovery entry points while retaining whole-call deadlines
+and caller cancellation. Binary Triple uses the same payload-sized normalization
+policy as Native and serializes the checked tree without a second normalization
+pass. Five additional wrapper cases cover large compact lists and shared-reference
+node/JSON expansion boundaries. The new ZooKeeper discovery E2E case uses the
+test catalog's configurable registry root, including its required trailing slash.
+
+After synchronization, the full unit suite passed **746/746** in each of the four
+native/Standard combinations above. Provider-method/discovery E2E passed
+**207/207** in each of the five runtime/asset combinations, with no failures or
+skips. The first local E2E attempt advertised the VPN interface address and was
+aborted; these passing results came from the subsequent physical-LAN fixture run.
+The full solution restored and built successfully, and freshly packed NuGet
+consumers passed on .NET 6/8/10. Temporary Java/ZooKeeper processes were stopped;
+the isolated Nacos test groups were checked for zero remaining instances and
+their test metadata was removed. Windows runtime and hosted CI execution remain
+outside this local verification.
+
+### Triple boundary review follow-up (2026-11-27)
+
+The review reproduced and fixed cancellation at synchronous response EOF being
+reported as success, and message-bearing responses incorrectly accepting a
+leading `grpc-status` without trailing status. It also found a disposal timing
+window after response headers: closing the HTTP pool alone did not always stop a
+stalled body. The actuator now links calls to its own disposal token, cancels only
+its own requests, retains caller-cancellation precedence, and leaves an injected
+shared HTTP client usable by other actuators. Disposal is idempotent.
+
+Four regression cases cover these boundaries, including real HTTP/2 stalled-body
+disposal and isolation between two actuators using one shared client. Request
+wrapper encoding also removes an intermediate `ToArray` copy by copying only the
+written buffer range into `ByteString`; the golden request/response contracts and
+message limits remain unchanged.
+
+After these fixes, local Release validation passed **750/750** unit cases in each
+of the four native/Standard combinations, **207/207** E2E cases in each of the five
+runtime/asset combinations (including **50/50** binary Triple cases per run), and
+fresh NuGet package smoke on .NET 6/8/10. Solution restore/build passed. Temporary
+fixtures and isolated remote test records were cleaned up. These are local results;
+hosted CI and Windows runtime verification have not been claimed.
+
+### Binary request preparation review (2026-11-27)
+
+Eighteen regression cases initially failed: client selection serialized binary
+arguments to JSON before dispatch, consuming single-use collections and rejecting
+Hessian-supported scalar values such as a `double.NaN` request. Java source-style
+arrays and some collection declarations also entered a POJO projection that
+enumerated and discarded their JSON representation. Binary non-hash selection
+now avoids the whole-request JSON pass. Consistent hash prepares one bounded
+wrapper, derives a Base64 SHA-256 digest of those exact bytes, and reuses the
+private snapshot for dispatch. Its key includes the method, Java types and
+arguments, excluding HTTP metadata. Native/HTTP-JSON retain their existing key
+policy; switching wire modes can change affinity.
+
+Generic argument preparation now recognizes collection serializer shapes without
+consuming the sequence, and does not project an already converted `JsonElement`
+again. Binary preparation checks cancellation, depth and a two-million-visit
+budget before recursively cloning JSON children or normalizing argument values.
+Projection and normalization have separate counters to avoid charging the same
+logical tree twice. Existing synchronous user getters/custom converters retain
+their original POCO mapping behavior.
+
+The 52 added unit cases cover single-use arguments across all six load-balancing
+modes, actual wire values, deterministic selection across two HTTP/2 nodes,
+pre-dispatch cancellation, oversized payloads, deep JSON and large projections.
+Existing Java collection/array E2E calls now also use single-use enumerables;
+four additional real-Java binary consistent-hash cases cover arrays and lists
+through both registries.
+
+Final local Release verification:
+
+| Verification | Library asset / host | Result |
+| --- | --- | --- |
+| Full unit suite | net8/net8, net10/net10, Standard/net8, Standard/net10 | 802 passed per combination, no failures or skips |
+| Full E2E suite | net10/net10, Standard/net6, net8/net8, Standard/net8, Standard/net10 | 211 passed per combination, including 54 binary cases; no failures or skips |
+| Freshly packed NuGet smoke | Standard/net6, net8/net8, net10/net10 | Native, HTTP/JSON, body deadlines and binary HTTP/2 passed |
+| Solution restore/build | All solution projects, Release | Passed, including Framework 4.8 cross-compilation |
+
+An earlier E2E attempt had nine existing Nacos/Java 3.2.20 Provider discovery
+failures during a registry connection reconnect; all binary cases in that host
+passed. That failed attempt is not counted as a passing run. The final complete
+rerun above used prebuilt assets and ready Java fixtures, without skipping cases
+or introducing RPC retry. All owned Java/ZooKeeper processes were stopped and
+isolated Nacos groups were checked for zero active instances and cleaned. These
+results are local; hosted CI and Windows runtime still require their own runs.
+
+### Binary invocation entry points (2026-11-27)
+
+An inferred call to Java 3.3.6 `listUsers` originally failed because the metadata
+type `java.util.List<java.lang.Long>` reached Java's method lookup verbatim.
+Binary wrapper encoding now erases generic type arguments before preparing the
+wire signature and argument values. ZooKeeper and Nacos E2E cases exercise the
+public inference overload with single-use collections and verify the returned IDs.
+Loopback tests cover dispatching an exact empty signature without a metadata read,
+and forwarding `content-language` while reserving `content-encoding`.
+
+The four local unit combinations each passed **803** cases. The five E2E
+combinations each passed **213** cases, including **56** binary Triple calls per
+combination. Tests ran on macOS with local Java Providers and ZooKeeper plus the
+supplied Nacos registry. The temporary processes and isolated registry records
+were cleaned up. Release solution build and freshly packed NuGet smoke on
+.NET 6/8/10 also passed. Windows runtime and GitHub Actions remain pending.
+
+### Triple response and timeout review (2026-11-28)
+
+The Java 3.3.6 fixture returns NaN when asked to average an empty array. That
+result originally decoded successfully with gRPC status 0 and then failed while
+producing JSON. Binary Triple now represents non-finite values as JSON strings
+and parses them back into typed floating-point models. Loopback HTTP/2 also
+confirmed that the owned handler forwarded a response cookie on the next call.
+Binary calls now carry only explicitly supplied cookies.
+
+A slow serializer reproduced a change to the default HTTP/JSON timeout. Its
+Provider transport timer again starts after request serialization. The network
+deadline tests wait for the fixture to receive the request or send the response
+headers before checking cancellation at the respective stage.
+
+Local Release verification passed **806/806** unit tests in each of the four
+library asset and runtime combinations. Each of the five end-to-end combinations
+passed **215/215** tests, including **58** binary cases and the NaN result through
+both ZooKeeper and Nacos. Solution build and fresh NuGet package checks on
+.NET 6/8/10 passed. These results are local to macOS. Hosted CI and Windows
+runtime validation remain pending.
+
+### Clean source review (2026-11-28)
+
+Compiling `QueryAsync(null, default)` and its typed equivalent against Apache main
+and the candidate exposed a change in overload selection. The candidate picked
+the new cancellation overload instead of the existing default-endpoint call.
+The new cancellation entry points now use extension methods in `DubboNet.Clients`.
+An external consumer of the freshly packed NuGet confirmed that both legacy
+expressions resolve as they did on main and that the explicit cancellation call
+resolves to the extension.
+
+With an isolated registry prefix, the previous readiness probe searched the
+default root and failed. The fixture launch, readiness probe, integration
+program, xUnit suite and QueryDemo now share the prefix. The local fixture
+runner also executes the Java wrapper contract test.
+
+The clean source build passed **807/807** unit cases in each of four combinations
+and **215/215** E2E cases in each of five combinations, including **58** binary
+cases per E2E run. The JDK 8 build passed its wrapper contract test. Both registry
+readiness checks and all eight integration and demo runs passed across the
+native and Standard assets. The package smoke passed on .NET 6/8/10. Fixtures
+and their isolated registry records were cleaned up after local verification.

@@ -2,7 +2,7 @@
 
 **English** | [简体中文](readme_cn.md)
 
-DubboNet is a Dubbo client library for .NET. It discovers Providers through ZooKeeper or Nacos, selects a transport actuator based on the Provider URL, and invokes Java interfaces through classic Dubbo TCP/Hessian2 or Dubbo 3 Triple HTTP/JSON. The caller does not need to reference a Java interface JAR.
+DubboNet is a Dubbo client library for .NET. It discovers Providers through ZooKeeper or Nacos and invokes Java interfaces through classic Dubbo TCP/Hessian2, Triple HTTP/JSON, or explicitly enabled binary Triple HTTP/2 with Java wrappers and Hessian2. The caller does not need to reference a Java interface JAR.
 
 > The core library targets **.NET Standard 2.0, .NET 8 and .NET 10**. Building the source still requires the .NET 10 SDK; examples use .NET 10, unit tests run on .NET 8/10, and E2E also validates .NET 6 consumers. These targets apply to this source branch and packages built from it, not previously published personal-project packages. Native Dubbo TCP invocation has been verified against a **Dubbo 2.7.3** Provider; the first phase of Triple support has been verified against a **Dubbo 3.3.6** Java Interface Provider. Read [Compatibility](#compatibility) for the boundaries of support.
 
@@ -13,7 +13,7 @@ DubboNet is a Dubbo client library for .NET. It discovers Providers through ZooK
 - Automatic Provider discovery and subscriptions through classic interface-level ZooKeeper directories or interface-level Nacos Naming services.
 - Automatic actuator selection based on the Provider URL scheme:
   - `dubbo://`: `NativeDubboActuatorSuite`, using Dubbo2 TCP frames and Hessian2 generic invocation.
-  - `tri://`: `TripleDubboActuatorSuite`, using Dubbo 3.3 Java Interface Unary HTTP/JSON invocation.
+  - `tri://`: `TripleDubboActuatorSuite`, using Java Interface Unary HTTP/JSON by default, or explicit HTTP/2 wrapper/Hessian2 invocation.
 - Load-balancing strategies including weighted random, smooth weighted round robin, shortest response, and consistent hashing.
 - Automatic Java method signature lookup through the Dubbo metadata center or Provider Telnet `ls -l`.
 - Overload resolution based on argument count and CLR types, with cached method metadata.
@@ -43,7 +43,7 @@ DubboClient
    |
    +-- DubboServiceDriver --> Load balancing --> Select actuator by scheme
            |-- dubbo:// --> NativeDubboActuatorSuite --> Dubbo TCP + Hessian2
-           +-- tri://   --> TripleDubboActuatorSuite --> Triple Unary HTTP/JSON
+           +-- tri://   --> TripleDubboActuatorSuite --> HTTP/JSON or explicit HTTP/2 wrapper
 ```
 
 `release` only determines the metadata lookup order; the Provider URL scheme determines the actuator. In a Provider URL, `dubbo=2.0.2` identifies the classic wire protocol version, while `version` and `group` identify service routing. These fields are not interchangeable.
@@ -271,7 +271,7 @@ var invocation = new DubboInvocation(
 DubboRequestResult result = await suite.SendQuery(invocation);
 ```
 
-Dubbo 3.3+ Java Interface services can also be called directly with the first-phase Triple actuator. Requests are sent to
+Dubbo 3.3+ Java Interface services can also be called directly with the default HTTP/JSON Triple actuator. Requests are sent to
 `/{service}/{method}`; the body is always a JSON argument array, with service version/group routing headers:
 
 ```csharp
@@ -292,6 +292,21 @@ var invocation = new DubboInvocation(
 
 DubboRequestResult result = await triple.SendQuery(invocation);
 ```
+
+To use binary Java Interface Unary through discovery, explicitly configure the client:
+
+```csharp
+using var client = new DubboClient("127.0.0.1:2181", new DubboClient.DubboClientConf
+{
+    TripleWireMode = TripleWireMode.Hessian2Wrapper,
+    DubboRequestTimeout = 5_000
+});
+var invocation = new DubboInvocation("com.example.EchoService", "echo",
+    new[] { "java.lang.String" }, new object[] { "hello" });
+DubboRequestResult result = await client.QueryAsync(invocation, CancellationToken.None);
+```
+
+This mode selects only eligible `tri://` Providers, including for overloaded methods, and sends a framed HTTP/2 `$invoke` wrapper. It never retries via JSON or Native after a failure. The first verified binary Provider is Java Dubbo 3.3.6; user Protobuf/IDL and streaming are outside this phase. Set `TripleUseTls=true` for HTTPS with normal certificate validation. The same options are available on `DubboActuatorSuiteConf` for direct calls. See the [wire contract, limits and runtime matrix](Docs/en/protocols/triple.md#explicit-binary-mode).
 
 If the Provider exposes Dubbo Telnet commands, you can explicitly use `DubboActuator` for diagnostics:
 
@@ -607,6 +622,8 @@ Load-balancing strategies:
 - `ShortestResponse`: estimates response time from the mean duration of successful requests over the last 30 seconds and the in-flight request count, breaking ties with weighted random selection. Failed calls are counted separately and incur a timeout-scale score penalty; fast failures are not treated as fast successful responses. Normal business data with a failing business `code` is not counted as a protocol failure.
 - `ConsistentHash`: uses stable MurmurHash2, UTF-8 request content, and 160 virtual nodes per node. The same candidate set and request content map consistently across processes; compatibility with Java Dubbo's hash implementation is not guaranteed. With no hash key, selection falls back to weighted random.
 
+Explicit binary Triple derives its key from the prepared wrapper's SHA-256 digest (Base64), then uses the same MurmurHash2 ring. The exact method, Java types and arguments are included; trace/deadline headers are excluded. Preparing once avoids consuming single-use parameters twice. Native/HTTP-JSON retain their existing keys; changing wire modes can change affinity. See [binary request preparation](Docs/en/protocols/triple.md#wire-contract-and-implementation).
+
 Active counts represent in-flight requests observed by this `DubboClient`, not global server load or TCP connection counts; connections can be multiplexed.
 Statistics are isolated by Provider, service, method signature, and invocation version/group, so fast and slow methods on the same node do not share them.
 The unified send entry point reserves a count exactly once, releasing it on success, failure, timeout, cancellation, or exception. Node removal and service cache eviction do not prematurely close connections still held by in-flight requests. Explicitly disposing the entire client still closes its connections.
@@ -670,7 +687,7 @@ The table distinguishes real-environment verification from conditional compatibi
 | .NET 9 | **Consumable via net8.0; not independently runtime-tested** | Framework compatibility does not extend the runtime vendor's support lifecycle |
 | .NET 6 | **Standard consumer; full provider-method E2E compatibility check** | CI runs the complete E2E suite on .NET 6; local-package Native/Triple smoke is also available. This does not extend the runtime vendor's support lifecycle |
 | .NET 7 | **Consumable via Standard; not independently runtime-tested** | Compatibility is conditional on the application's complete dependency graph |
-| .NET Framework | **Conditional, not full registry support** | A Windows/.NET Framework 4.8 package smoke job covers Native/Triple and deadlines; macOS cannot validate Framework execution. Nacos 2 SDK gRPC streaming is not automatically supported. See [boundaries](Docs/FrameworkCompatibility.md) |
+| .NET Framework | **Conditional, not full registry support** | Windows package smoke covers Native/Triple HTTP-JSON and explicit binary-platform rejection; binary Triple is not supported on legacy handlers. macOS cannot execute Framework tests. See [boundaries](Docs/FrameworkCompatibility.md) |
 | Other Standard 2.0 implementations | **API-compatible candidates, unverified** | Unity, Xamarin, Mono, mobile, trimming and NativeAOT are not implied by the TFM |
 | Classic interface-level ZooKeeper registration | **Supported** | Reads `/dubbo/{interface}/providers` and installs watches |
 | Nacos 2.5.4 interface-level registration | **Verified in a real environment** | Naming Provider discovery/subscriptions and Config remote metadata reads/listeners; verified with Dubbo 3.2.20 and 3.3.6 |
@@ -681,7 +698,8 @@ The table distinguishes real-environment verification from conditional compatibi
 | Classic `dubbo://` compatibility mode in Dubbo 3.x | **Verified for specific versions** | Dubbo2/Hessian2 `$invoke` Providers in 3.2.20 and 3.3.6 verified with ZooKeeper/Nacos; other versions still require testing |
 | Dubbo 3 application-level service discovery | **Not implemented** | The Dubbo 3 application-level service discovery metadata layout is not implemented |
 | Dubbo 3.3.6 + `tri://` + Java Interface Unary JSON | **Verified in a real environment (first phase)** | HTTP/1.1, `application/json`, version/group/timeout headers, and attachments |
-| Triple Protobuf/IDL, streaming, gRPC framing | **Not implemented** | The first phase only covers Java Interface Unary HTTP/JSON, not full Triple/gRPC capabilities |
+| Dubbo 3.3.6 + binary Triple Java Interface Unary | **Explicit opt-in** | HTTP/2, fixed Protobuf wrapper, Hessian2 `$invoke`, exact signatures, RPC status/trailers and wrapped Java exceptions; .NET 6/8/10 hosts |
+| Triple user Protobuf/IDL and streaming | **Not implemented** | Binary Java wrappers do not imply user IDL, streaming or universal gRPC compatibility |
 | Dubbo Telnet/QoS | **Optional** | Metadata fallback and diagnostics only when the registered Provider address and port expose the required commands |
 | Explicit version/group routing | **Strict matching (compatibility change)** | Non-empty `Version` / `Group` must match Provider identities exactly, including case, with no fallback to another version/group. Unspecified fields impose no constraint. No matching nodes results in no available Provider |
 
@@ -711,9 +729,9 @@ The native actuator currently has the following boundaries:
 
 See [Docs/en/protocols/native-dubbo.md](Docs/en/protocols/native-dubbo.md) for frame headers, request fields, and response result flags.
 
-See [Docs/en/protocols/triple.md](Docs/en/protocols/triple.md) for the first-phase Triple request format, routing headers, and explicit limitations.
+See [Docs/en/protocols/triple.md](Docs/en/protocols/triple.md) for both Triple wire modes, routing headers, and explicit limitations.
 
-Each Triple request uses one deadline covering both response headers and the entire response body. The Provider URL's `timeout` overrides the client's `DubboRequestTimeout` and may be longer or shorter. If absent, the client default applies; the effective value is at least 1 ms. Internal `HttpClient.Timeout` is disabled to avoid competing timeouts.
+Each Triple actuator request uses one deadline covering sending, response headers and the entire response body. For default HTTP/JSON calls and direct actuators, Provider URL `timeout` overrides the configured default. Binary client calls and the cancellation extensions in `DubboNet.Clients` also use `DubboRequestTimeout` as a whole-call limit, including metadata and discovery. Binary requests send the remaining time as `grpc-timeout`. The actuator owns the HTTP timeout through its cancellation token.
 
 When calling Native/Triple `SendQuery(invocation, cancellationToken)` directly, caller cancellation follows the existing convention of returning a failure result with `QuerySuccess == false`, rather than putting the Task into the Canceled state. Do not rely on `Task.WhenAll` to propagate cancellation automatically; the caller must check results/tokens and decide whether to stop the batch. Triple's `ErrorMeaasge` distinguishes `canceled by caller` from `timed out after N ms`; caller cancellation takes precedence when both cancellation and the deadline fire. Invalid arguments and calls to a disposed actuator can still throw directly.
 
@@ -792,7 +810,7 @@ The native actuator only supports Hessian2. Ensure the Provider accepts Hessian2
 
 ### Failed `tri://` Calls
 
-Ensure the Provider uses Dubbo 3.3+ and exposes Java Interface HTTP/JSON access. The first-phase actuator sends
+For the default mode, ensure the Provider uses Dubbo 3.3+ and exposes Java Interface HTTP/JSON access. The HTTP/JSON actuator sends
 an HTTP/1.1 JSON POST to `http://{host}:{port}/{service}/{method}`. The body must be an argument array,
 including `[value]` for a single argument. With multiple versions/groups, ensure both fields in the registered URL are accurate.
 
@@ -801,8 +819,7 @@ When invoking through `DubboClient`, detected overloaded methods are restricted 
 if only `tri://` nodes exist, an explicit error is returned. To expose overloads through Triple,
 declare a different REST route for each overload on the Provider.
 
-The first phase does not support Protobuf/IDL, streaming, or gRPC framing; such services cannot be invoked through the current
-`TripleDubboActuatorSuite`.
+The overload restriction above applies to the default HTTP/JSON mode. Explicit `Hessian2Wrapper` mode supports exact Java signatures and framed HTTP/2 calls. Check both `GrpcStatusCode` and `TripleExceptionCode` when diagnosing errors: a nonzero Java exception indicator can accompany `grpc-status=0`; `QuerySuccess` accounts for both. User Protobuf/IDL and streaming remain unsupported.
 
 ### Request Timeout or Disconnection
 

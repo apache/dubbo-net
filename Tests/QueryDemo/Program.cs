@@ -24,7 +24,6 @@ using System.Text.Json;
 
 LibraryAssetVerification.Verify();
 
-const string DubboRootPath = "/dubbo-3.3.6";
 const string EchoService = "com.example.dubbonet.api.EchoService";
 const string DataTypeService = "com.example.dubbonet.api.DataTypeService";
 
@@ -48,6 +47,7 @@ if (options.PrintConfiguration)
     return;
 }
 string registryAddress = options.RegistryAddress;
+string dubboRootPath = EndToEndRegistryLayout.RootPath("3.3.6");
 string providerAddress;
 try { providerAddress = (await options.ResolveProviderAddressesAsync())[0].ToString(); }
 catch (Exception exception) when (exception is ArgumentException or System.Net.Sockets.SocketException)
@@ -59,7 +59,7 @@ catch (Exception exception) when (exception is ArgumentException or System.Net.S
 
 Console.WriteLine($"Registry: {registryAddress}");
 Console.WriteLine($"Provider host: {options.ProviderHost} ({providerAddress})");
-Console.WriteLine($"Dubbo root: {DubboRootPath}");
+Console.WriteLine($"Dubbo root: {dubboRootPath}");
 Console.WriteLine();
 
 // DubboClient 应作为长生命周期对象复用。它会复用 ZooKeeper、Provider 连接、
@@ -68,9 +68,9 @@ Console.WriteLine();
 // discovery results, and metadata caches can be shared. Dispose it at shutdown.
 using DubboClient client = new(registryAddress, new DubboClient.DubboClientConf
 {
-    DubboRootPath = DubboRootPath,
+    DubboRootPath = dubboRootPath,
     // Prepared ZooKeeper/Nacos fixtures store metadata in the same version group.
-    MetadataRootPath = DubboRootPath,
+    MetadataRootPath = dubboRootPath,
     DubboRequestTimeout = 10_000
 });
 

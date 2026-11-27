@@ -65,6 +65,23 @@ public class TripleTransportReliabilityTest
         await serving;
     }
 
+    [Fact]
+    public async Task PublicHttpJsonFactoryStartsTheTransportTimeoutAfterJsonEncoding()
+    {
+        using var server = new LoopbackServer(IPAddress.Loopback);
+        using var suite = new TripleDubboActuatorSuite(server.EndPoint,
+            new DubboActuatorSuiteConf { DubboRequestTimeout = 500 });
+        Task serving = server.ReplyAsync();
+        DubboInvocation invocation = new("Service", "echo",
+            new[] { "com.example.Request" }, new object[] { new SlowJsonArgument() });
+
+        DubboRequestResult result = await suite.SendQuery(invocation).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(result.QuerySuccess, result.ErrorMeaasge);
+        Assert.Equal("42", result.Result);
+        await serving;
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
@@ -72,14 +89,31 @@ public class TripleTransportReliabilityTest
     [InlineData(true, true)]
     public async Task PublicFactoryDeadlineBoundsHeadersAndBodyWithAndWithoutProviderMetadata(bool delayBody, bool providerTimeout)
     {
+        const int transportTimeout = 1000;
         using var server = new LoopbackServer(IPAddress.Loopback);
         using var suite = new TripleDubboActuatorSuite(server.EndPoint,
-            new DubboActuatorSuiteConf { DubboRequestTimeout = providerTimeout ? 5000 : 150 });
-        if (providerTimeout) suite.RegisterService(Endpoint(server.EndPoint, 150));
-        Task serving = server.ReplyAsync(delayBody ? 0 : 1000, delayBody ? 1000 : 0);
-        DubboRequestResult result = await suite.SendQuery(Invocation()).WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.False(result.QuerySuccess);
-        Assert.Equal("Triple request timed out after 150 ms.", result.ErrorMeaasge);
+            new DubboActuatorSuiteConf { DubboRequestTimeout = providerTimeout ? 5000 : transportTimeout });
+        if (providerTimeout) suite.RegisterService(Endpoint(server.EndPoint, transportTimeout));
+
+        // Confirm which phase the real request reached and hold that phase open
+        // until the client returns. Cold connection setup can vary under load.
+        var allowResponse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task serving = server.ReplyAsync(
+            allowHeaders: delayBody ? null : allowResponse.Task,
+            allowBody: delayBody ? allowResponse.Task : null);
+        try
+        {
+            Task<DubboRequestResult> request = suite.SendQuery(Invocation());
+            await (delayBody ? server.HeadersSent.Task : server.RequestReceived.Task)
+                .WaitAsync(TimeSpan.FromSeconds(4));
+            DubboRequestResult result = await request.WaitAsync(TimeSpan.FromSeconds(4));
+            Assert.False(result.QuerySuccess);
+            Assert.Equal($"Triple request timed out after {transportTimeout} ms.", result.ErrorMeaasge);
+        }
+        finally
+        {
+            allowResponse.TrySetResult();
+        }
         await serving;
     }
 
@@ -159,6 +193,19 @@ public class TripleTransportReliabilityTest
     private static DubboServiceEndPointInfo Endpoint(IPEndPoint endPoint, int timeout) =>
         new() { EndPoint = endPoint, Interface = "Service", Scheme = "tri", Timeout = timeout };
 
+    private sealed class SlowJsonArgument
+    {
+        public int Value
+        {
+            get
+            {
+                // A caller property can take longer to serialize than the HTTP time budget.
+                Thread.Sleep(TimeSpan.FromSeconds(1));
+                return 1;
+            }
+        }
+    }
+
     private sealed class UnexpectedHandler : HttpMessageHandler
     {
         internal bool Called, CancelInternally;
@@ -190,7 +237,8 @@ public class TripleTransportReliabilityTest
             _listener.Start();
         }
 
-        internal async Task ReplyAsync(int headersDelay = 0, int bodyDelay = 0)
+        internal async Task ReplyAsync(int headersDelay = 0, int bodyDelay = 0,
+            Task? allowHeaders = null, Task? allowBody = null)
         {
             using TcpClient socket = await _listener.AcceptTcpClientAsync(_lifetime.Token);
             using NetworkStream stream = socket.GetStream();
@@ -209,9 +257,11 @@ public class TripleTransportReliabilityTest
             try
             {
                 await Task.Delay(headersDelay, _lifetime.Token);
+                if (allowHeaders != null) await allowHeaders.WaitAsync(_lifetime.Token);
                 await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"), _lifetime.Token);
                 HeadersSent.TrySetResult();
                 await Task.Delay(bodyDelay, _lifetime.Token);
+                if (allowBody != null) await allowBody.WaitAsync(_lifetime.Token);
                 await stream.WriteAsync(Encoding.ASCII.GetBytes("42"), _lifetime.Token);
             }
             catch (IOException)
