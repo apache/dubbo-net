@@ -37,7 +37,7 @@ public sealed class ZooKeeperProviderDiscoveryEndToEndTests
 
         var result = await discovery.GetProviderEndPointsAsync(EndToEndTestCatalog.EchoService);
 
-        Assert.Null(result.ErrorInfo);
+        Assert.Equal(ProviderRegistrySnapshotState.Available, result.State);
         Assert.Contains(result.EndPoints, endpoint =>
             endpoint.Scheme == "dubbo"
             && endpoint.EndPoint.Port == providerPort

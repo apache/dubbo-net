@@ -412,7 +412,7 @@ namespace DubboNet.Clients
             }
             _providerDiscovery = new ProviderDiscovery(
                 _innerMyZookeeper, _innerMyNacos, DubboRootPath,
-                _dubboClientZookeeperWatcher, HandleNacosProviderChangedAsync,
+                _dubboClientZookeeperWatcher, HandleProviderRegistryChangedAsync,
                 () =>
                 {
                     if (InnerRegistryState == RegistryState.LostConnect
@@ -820,10 +820,12 @@ namespace DubboNet.Clients
             //没有_dubboDriverCollection没有目标服务，尝试添加服务节点 （新的ServiceName都会通过这里将节点添加进来）
             else if (availableDubboActuatorInfo.ResultType == AvailableDubboActuatorInfo.GetDubboActuatorSuiteResultType.NoDubboServiceDriver)
             {
-                DubboServiceEndPointInfos serviceEndPointsInfo = await DiscoverProvidersAsync(nowServiceName);
-                if (serviceEndPointsInfo.ErrorInfo != null)
+                ProviderRegistrySnapshot providerSnapshot = await DiscoverProvidersAsync(nowServiceName);
+                if (providerSnapshot.State != ProviderRegistrySnapshotState.Available)
                 {
-                    string tempErrorMes = $"[SendRequestAsync] GetSeviceProviderEndPoints fail {nowServiceName} -> {serviceEndPointsInfo.ErrorInfo}";
+                    string errorInfo = providerSnapshot.ErrorInfo
+                        ?? $"no provider endpoint in [{nowServiceName}]";
+                    string tempErrorMes = $"[SendRequestAsync] GetSeviceProviderEndPoints fail {nowServiceName} -> {errorInfo}";
                     MyLogger.LogWarning(tempErrorMes);
                     return new DubboRequestResult()
                     {
@@ -834,7 +836,9 @@ namespace DubboNet.Clients
                 }
                 else
                 {
-                    _dubboDriverCollection.AddDubboServiceDriver(nowServiceName, serviceEndPointsInfo.EndPoints);
+                    _dubboDriverCollection.AddDubboServiceDriver(
+                        nowServiceName,
+                        new List<DubboServiceEndPointInfo>(providerSnapshot.EndPoints));
                     return await QueryInternalAsync(funcEndPoint, req, invocation);
                 }
             }
@@ -842,15 +846,19 @@ namespace DubboNet.Clients
             else if (availableDubboActuatorInfo.ResultType == AvailableDubboActuatorInfo.GetDubboActuatorSuiteResultType.NoActuatorInService)
             {
                 //实际上是有watch会自动更新，这里主动更新一次可以兼容watch异常的情况（这里会触发同一个路径注册2个watch，不过重复的watch只会触发一次）
-                DubboServiceEndPointInfos serviceEndPointsInfo = await DiscoverProvidersAsync(nowServiceName);
+                ProviderRegistrySnapshot providerSnapshot = await DiscoverProvidersAsync(nowServiceName);
                 string tempErrorMes = null;
-                if (serviceEndPointsInfo.ErrorInfo != null)
+                if (providerSnapshot.State != ProviderRegistrySnapshotState.Available)
                 {
-                    tempErrorMes = $"[SendRequestAsync] GetSeviceProviderEndPoints fail {nowServiceName} -> {serviceEndPointsInfo.ErrorInfo}";
+                    string errorInfo = providerSnapshot.ErrorInfo
+                        ?? $"no provider endpoint in [{nowServiceName}]";
+                    tempErrorMes = $"[SendRequestAsync] GetSeviceProviderEndPoints fail {nowServiceName} -> {errorInfo}";
                 }
-                else if (serviceEndPointsInfo.EndPoints.Count > 0)
+                else if (providerSnapshot.EndPoints.Count > 0)
                 {
-                    _dubboDriverCollection.AddDubboServiceDriver(nowServiceName, serviceEndPointsInfo.EndPoints);
+                    _dubboDriverCollection.AddDubboServiceDriver(
+                        nowServiceName,
+                        new List<DubboServiceEndPointInfo>(providerSnapshot.EndPoints));
                     return await QueryInternalAsync(funcEndPoint, req, invocation);
                 }
                 else
@@ -1073,71 +1081,53 @@ namespace DubboNet.Clients
         /// EN: Refreshes provider endpoints for a service.
         /// </summary>
         /// <param name="serviceName"></param>
-        /// <param name="isFullPath"></param>
         /// <returns></returns>
-        internal async Task<bool> ReflushProviderAsync(string serviceName ,bool isFullPath = false)
+        internal async Task<bool> ReflushProviderAsync(string serviceName)
         {
-            DubboServiceEndPointInfos serviceEndPointsInfo = await DiscoverProvidersAsync(serviceName,isFullPath);
-            if (serviceEndPointsInfo.ErrorInfo != null)
+            ProviderRegistrySnapshot providerSnapshot = await DiscoverProvidersAsync(serviceName);
+            if (providerSnapshot.State == ProviderRegistrySnapshotState.Empty)
             {
-                string unavailableServiceName = serviceName;
-                if (isFullPath
-                    && TryGetServiceNameFromProviderPath(serviceName, out string parsedServiceName))
+                bool hasDriver = _dubboDriverCollection.HasServiceDriver(serviceName);
+                bool changed = hasDriver
+                    ? _dubboDriverCollection.AddDubboServiceDriver(
+                        serviceName,
+                        new List<DubboServiceEndPointInfo>())
+                    : false;
+                if (hasDriver)
                 {
-                    unavailableServiceName = parsedServiceName;
-                }
-                if (_dubboDriverCollection.HasServiceDriver(unavailableServiceName)
-                    && IsNoProviderError(serviceEndPointsInfo.ErrorInfo))
-                {
-                    bool changed = _dubboDriverCollection.AddDubboServiceDriver(
-                        unavailableServiceName,
-                        new List<DubboServiceEndPointInfo>());
-                    await _metadataManager.RefreshCachedServiceAsync(unavailableServiceName)
+                    await _metadataManager.RefreshCachedServiceAsync(serviceName)
                         .ConfigureAwait(false);
-                    return changed;
                 }
-                MyLogger.LogError($"[ReflushProviderByPathAsync] fail by {serviceName} : {serviceEndPointsInfo.ErrorInfo}");
-                return false;
-            }
-            else
-            {
-                string nowServiceName = serviceName;
-                if (isFullPath && !TryGetServiceNameFromProviderPath(serviceName, out nowServiceName))
-                {
-                    MyLogger.LogError($"[ReflushProviderByPathAsync] fail : {serviceName} is error path for Service");
-                    return false;
-                }
-                bool changed = _dubboDriverCollection.AddDubboServiceDriver(
-                    nowServiceName,
-                    serviceEndPointsInfo.EndPoints);
-                await _metadataManager.RefreshCachedServiceAsync(nowServiceName).ConfigureAwait(false);
                 return changed;
             }
+            if (providerSnapshot.State != ProviderRegistrySnapshotState.Available)
+            {
+                MyLogger.LogError(
+                    $"[ReflushProviderByPathAsync] fail by {serviceName} : {providerSnapshot.ErrorInfo}");
+                return false;
+            }
+
+            bool providerChanged = _dubboDriverCollection.AddDubboServiceDriver(
+                serviceName,
+                new List<DubboServiceEndPointInfo>(providerSnapshot.EndPoints));
+            await _metadataManager.RefreshCachedServiceAsync(serviceName).ConfigureAwait(false);
+            return providerChanged;
         }
 
-        private static bool IsNoProviderError(string errorInfo) =>
-            !string.IsNullOrWhiteSpace(errorInfo)
-            && (errorInfo.Contains("no provider", StringComparison.OrdinalIgnoreCase)
-                || errorInfo.Contains("no healthy provider", StringComparison.OrdinalIgnoreCase));
-
-        internal bool TryGetServiceNameFromProviderPath(string providerPath, out string serviceName)
+        private Task<ProviderRegistrySnapshot> DiscoverProvidersAsync(string serviceName)
         {
             ThrowIfDisposed();
-            return _providerDiscovery.TryGetServiceNameFromProviderPath(providerPath, out serviceName);
-        }
-
-        private Task<DubboServiceEndPointInfos> DiscoverProvidersAsync(string serviceName, bool isFullPath = false)
-        {
-            ThrowIfDisposed();
-            return _providerDiscovery.GetProviderEndPointsAsync(serviceName, isFullPath);
+            return _providerDiscovery.GetProviderEndPointsAsync(serviceName);
         }
 
         private async Task<IReadOnlyList<DubboServiceEndPointInfo>>
             GetProviderEndPointsForMetadataAsync(string serviceName)
         {
-            DubboServiceEndPointInfos result =
+            ProviderRegistrySnapshot result =
                 await DiscoverProvidersAsync(serviceName).ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(result.ErrorInfo))
+            if (result.State != ProviderRegistrySnapshotState.Available
+                && !(result.State == ProviderRegistrySnapshotState.Empty
+                    && string.IsNullOrEmpty(result.ErrorInfo)))
             {
                 throw new DubboMetadataException(
                     $"Can not discover providers for '{serviceName}': {result.ErrorInfo}");
@@ -1145,7 +1135,7 @@ namespace DubboNet.Clients
             return result.EndPoints;
         }
 
-        private async Task HandleNacosProviderChangedAsync(string serviceName)
+        private async Task HandleProviderRegistryChangedAsync(string serviceName)
         {
             if (IsDisposed || string.IsNullOrWhiteSpace(serviceName))
             {

@@ -64,36 +64,11 @@ namespace DubboNet.Clients
                 MyLogger.LogWarning("[DubboClientZookeeperWatcher] dubbo client is disposed");
                 return;
             }
-            //节点信息发生变化
+            // Provider adapters own service-level watch events and translate
+            // them into backend-neutral snapshot invalidations.
             if (@event.getState() == Event.KeeperState.SyncConnected && @event.get_Type() == Event.EventType.NodeChildrenChanged)
             {
-                //如果@event.getPath()为空ReflushProviderAsync会抛出异常
-                if (string.IsNullOrEmpty(@event.getPath()))
-                {
-                    MyLogger.LogError("[DubboClientZookeeperWatcher] get empty path");
-                }
-                else if (InnerDubboClient.TryGetServiceNameFromProviderPath(
-                    @event.getPath(),
-                    out string serviceName))
-                {
-                    if (InnerDubboClient.HasServiceDriver(serviceName))
-                    {
-                        await InnerDubboClient.ReflushProviderAsync(@event.getPath(), true);
-                    }
-                    else if (InnerDubboClient.HasCachedMetadata(serviceName))
-                    {
-                        await InnerDubboClient.RefreshCachedMetadataAsync(serviceName);
-                    }
-                    else
-                    {
-                        MyLogger.LogInfo(
-                            $"[DubboClientZookeeperWatcher] service is no longer cached: {serviceName}");
-                    }
-                }
-                else
-                {
-                    MyLogger.LogInfo($"[DubboClientZookeeperWatcher] service has removed {@event.getPath()}");
-                }
+                return;
             }
             //注册中心连接超时（或断开后马上连接成功，连接没有重置）
             if (@event.getState() == Event.KeeperState.SyncConnected && @event.get_Type() == Event.EventType.None)

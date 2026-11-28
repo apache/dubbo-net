@@ -25,6 +25,7 @@ using DubboNet.Metadata;
 using DubboNet.Clients.RegistryClient;
 using DubboNet.Registry;
 using Nacos.V2;
+using Nacos.V2.Exceptions;
 using Nacos.V2.Naming;
 using Nacos.V2.Naming.Dtos;
 using Nacos.V2.Remote;
@@ -133,6 +134,74 @@ public class MyNacosTest
     }
 
     [Fact]
+    public async Task ProviderDiscovery_NacosChangeRefreshesWithACompleteSnapshot()
+    {
+        var server = new FakeNacos();
+        server.Add("1", 20880);
+        string registeredService = Assert.Single(server.Services);
+        using MyNacos nacos = server.CreateClient();
+        ProviderDiscovery? discovery = null;
+        var changed = new TaskCompletionSource<ProviderRegistrySnapshot>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        discovery = new ProviderDiscovery(
+            null!,
+            nacos,
+            Group,
+            null!,
+            async serviceName =>
+            {
+                ProviderRegistrySnapshot refreshed =
+                    await discovery!.GetProviderEndPointsAsync(serviceName);
+                changed.TrySetResult(refreshed);
+            },
+            () => { });
+        using (discovery)
+        {
+            ProviderRegistrySnapshot initial =
+                await discovery.GetProviderEndPointsAsync(Service);
+            Assert.Equal(ProviderRegistrySnapshotState.Available, initial.State);
+            Assert.Single(initial.EndPoints);
+
+            server.Instances[registeredService].Add(FakeNacos.Provider(20881));
+            await server.PushNaming();
+            ProviderRegistrySnapshot refreshed =
+                await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(ProviderRegistrySnapshotState.Available, refreshed.State);
+            Assert.Equal(new[] { 20880, 20881 }, refreshed.EndPoints
+                .Select(endpoint => endpoint.EndPoint.Port)
+                .OrderBy(port => port));
+        }
+    }
+
+    public static TheoryData<int, int> NacosErrorStateCases => new()
+    {
+        { NacosException.NO_RIGHT, (int)ProviderRegistrySnapshotState.PermissionDenied },
+        { NacosException.INVALID_PARAM, (int)ProviderRegistrySnapshotState.InvalidRequest },
+        { NacosException.CLIENT_INVALID_PARAM, (int)ProviderRegistrySnapshotState.InvalidRequest },
+        { NacosException.SERVER_ERROR, (int)ProviderRegistrySnapshotState.Unavailable }
+    };
+
+    [Theory]
+    [MemberData(nameof(NacosErrorStateCases))]
+    public async Task ProviderDiscovery_ClassifiesNacosAuthorizationAndRequestErrors(
+        int errorCode,
+        int expectedState)
+    {
+        var server = new FakeNacos { InstanceReadException = new NacosException(errorCode, "registry rejected request") };
+        server.Add("1", 20880);
+        using MyNacos nacos = server.CreateClient();
+        using var discovery = new ProviderDiscovery(null!, nacos, Group, null!,
+            _ => Task.CompletedTask, () => { });
+
+        ProviderRegistrySnapshot result = await discovery.GetProviderEndPointsAsync(Service);
+
+        Assert.Equal((ProviderRegistrySnapshotState)expectedState, result.State);
+        Assert.Empty(result.EndPoints);
+        Assert.Contains("registry rejected request", result.ErrorInfo);
+    }
+
+    [Fact]
     public async Task ProviderDiscovery_CoalescesConcurrentLookupsAndDoesNotCacheTheResult()
     {
         var server = new FakeNacos();
@@ -152,13 +221,13 @@ public class MyNacosTest
         using var releaseSdkRead = new ManualResetEventSlim();
         server.BeforeInstanceRead = () =>
             Assert.True(releaseSdkRead.Wait(TimeSpan.FromSeconds(10)));
-        Task<DubboServiceEndPointInfos>[] callers = Enumerable.Range(0, 32)
+        Task<ProviderRegistrySnapshot>[] callers = Enumerable.Range(0, 32)
             .Select(_ => Task.Factory.StartNew(() =>
             {
                 ready.Signal();
                 Assert.True(start.Wait(TimeSpan.FromSeconds(10)));
                 entering.Signal();
-                Task<DubboServiceEndPointInfos> lookup = discovery.GetProviderEndPointsAsync(Service);
+                Task<ProviderRegistrySnapshot> lookup = discovery.GetProviderEndPointsAsync(Service);
                 issued.Signal();
                 return lookup;
             }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap())
@@ -182,7 +251,11 @@ public class MyNacosTest
             releaseSdkRead.Set();
             server.InstanceGate.SetResult(server.Instances[Assert.Single(server.Services)]);
         }
-        Assert.All(await Task.WhenAll(callers), result => Assert.Single(result.EndPoints));
+        Assert.All(await Task.WhenAll(callers), result =>
+        {
+            Assert.Equal(ProviderRegistrySnapshotState.Available, result.State);
+            Assert.Single(result.EndPoints);
+        });
         Assert.Equal(1, server.InstanceReads);
         server.BeforeInstanceRead = null;
 
@@ -201,32 +274,13 @@ public class MyNacosTest
         using var discovery = new ProviderDiscovery(null!, nacos, Group, null!,
             _ => Task.CompletedTask, () => { });
 
-        Task<DubboServiceEndPointInfos> pending = discovery.GetProviderEndPointsAsync(Service);
+        Task<ProviderRegistrySnapshot> pending = discovery.GetProviderEndPointsAsync(Service);
         await server.InstanceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         discovery.Dispose();
         await Assert.ThrowsAsync<ObjectDisposedException>(() => discovery.GetProviderEndPointsAsync(Service));
         server.InstanceGate.SetResult(server.Instances[Assert.Single(server.Services)]);
         await Assert.ThrowsAsync<ObjectDisposedException>(() => pending);
         Assert.Empty(server.NamingListeners);
-    }
-
-    [Fact]
-    public async Task ProviderDiscovery_FullPathDoesNotShareTheServiceLookup()
-    {
-        var server = new FakeNacos();
-        server.Add("1", 20880);
-        server.InstanceGate = new TaskCompletionSource<List<Instance>>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        using MyNacos nacos = server.CreateClient();
-        using var discovery = new ProviderDiscovery(null!, nacos, Group, null!,
-            _ => Task.CompletedTask, () => { });
-
-        Task<DubboServiceEndPointInfos> pending = discovery.GetProviderEndPointsAsync(Service);
-        await server.InstanceReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        DubboServiceEndPointInfos fullPath = await discovery.GetProviderEndPointsAsync(Service, isFullPath: true);
-        Assert.Contains("expects a Dubbo interface name", fullPath.ErrorInfo);
-        server.InstanceGate.SetResult(server.Instances[Assert.Single(server.Services)]);
-        Assert.Single((await pending).EndPoints);
     }
 
     [Fact]
@@ -649,6 +703,7 @@ public class MyNacosTest
         public int CatalogReads, NamingSubscribes, ConfigReads, ConfigRemoves;
         public int InstanceReads;
         public TaskCompletionSource<List<Instance>>? InstanceGate;
+        public Exception? InstanceReadException;
         public Action? BeforeInstanceRead;
         public TaskCompletionSource InstanceReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -709,6 +764,8 @@ public class MyNacosTest
             Interlocked.Increment(ref InstanceReads);
             InstanceReadStarted.TrySetResult();
             BeforeInstanceRead?.Invoke();
+            if (InstanceReadException != null)
+                return Task.FromException<List<Instance>>(InstanceReadException);
             return InstanceGate?.Task ?? Task.FromResult(Instances.GetValueOrDefault(name) ?? new List<Instance>());
         }
         private Task<ListView<string>> Catalog(string group)
