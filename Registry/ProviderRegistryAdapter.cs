@@ -23,7 +23,6 @@ using org.apache.zookeeper;
 using org.apache.zookeeper.data;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 
@@ -88,6 +87,16 @@ namespace DubboNet.Registry
         internal ProviderRegistrySnapshotState State { get; }
         internal string ErrorInfo { get; }
         internal long? Revision { get; }
+
+        // Empty is a valid registry answer: the service is known, but no
+        // provider is currently registered. Only an unavailable backend is
+        // safe to retry; invalid requests and authorization failures are
+        // terminal sentinels for this lookup.
+        internal bool IsUsable =>
+            State == ProviderRegistrySnapshotState.Available
+            || State == ProviderRegistrySnapshotState.Empty;
+
+        internal bool IsRetryable => State == ProviderRegistrySnapshotState.Unavailable;
     }
 
     // Narrow ZooKeeper read surface. The adapter owns URL normalization and
@@ -95,7 +104,7 @@ namespace DubboNet.Registry
     internal interface IProviderZooKeeper
     {
         bool IsConnected { get; }
-        Task<Stat> ExistsAsync(string path);
+        Task<Stat> ExistsAsync(string path, Watcher watcher = null);
         Task<IReadOnlyList<string>> GetChildrenAsync(string path, Watcher watcher);
     }
 
@@ -137,7 +146,8 @@ namespace DubboNet.Registry
         {
             if (@event.getState() == Event.KeeperState.SyncConnected
                 && (@event.get_Type() == Event.EventType.NodeChildrenChanged
-                    || @event.get_Type() == Event.EventType.NodeDeleted))
+                    || @event.get_Type() == Event.EventType.NodeDeleted
+                    || @event.get_Type() == Event.EventType.NodeCreated))
             {
                 return NotifyChangedAsync(@event.getPath());
             }
@@ -179,7 +189,6 @@ namespace DubboNet.Registry
 
             string fullPath = $"{_rootPath}{serviceName}{ZooKeeperRegistryPaths.ProvidersSuffix}";
             string servicePathForLookup = $"{_rootPath}{serviceName}";
-            bool previouslyWatched = IsWatched(fullPath) || IsWatched(servicePathForLookup);
             try
             {
                 Stat stat = await _zookeeper.ExistsAsync(fullPath).ConfigureAwait(false);
@@ -189,37 +198,38 @@ namespace DubboNet.Registry
                         return Failure(serviceName, ProviderRegistrySnapshotState.Unavailable,
                             $"can not get [{serviceName}] that _zookeeper can not connect");
 
-                    bool serviceExists =
-                        await _zookeeper.ExistsAsync(servicePathForLookup).ConfigureAwait(false) != null;
-                    if (!serviceExists)
+                    // Check once without a watch, then install an existence watch
+                    // in a second request. This closes the race where the service
+                    // is created between the two operations: an existing service
+                    // can proceed through its children, while a missing service
+                    // retains a NodeCreated watch for a later refresh.
+                    await _zookeeper.ExistsAsync(servicePathForLookup).ConfigureAwait(false);
+                    RegisterWatch(servicePathForLookup, serviceName, onChanged);
+                    Stat serviceStat = await _zookeeper
+                        .ExistsAsync(servicePathForLookup, this).ConfigureAwait(false);
+                    if (serviceStat == null)
                     {
-                        return previouslyWatched
-                            ? Failure(serviceName, ProviderRegistrySnapshotState.Empty,
-                                $"no provider in [{serviceName}]")
-                            : Failure(serviceName, ProviderRegistrySnapshotState.InvalidRequest,
-                                $"serviceName [{serviceName}] is error");
+                        return Failure(serviceName, ProviderRegistrySnapshotState.Empty,
+                            $"no provider in [{serviceName}]");
                     }
 
-                    // Keep a watch on the service node while the providers node is
-                    // absent, so a later providers-node creation invalidates the
-                    // empty snapshot. The child watch is one-shot in ZooKeeper.
-                    RegisterWatch(servicePathForLookup, serviceName, onChanged);
+                    // The provider node may have been created while the service
+                    // existence watch was being installed. Read the service
+                    // children so the current state is not lost.
                     IReadOnlyList<string> serviceChildren = await _zookeeper
                         .GetChildrenAsync(servicePathForLookup, this).ConfigureAwait(false);
                     if (serviceChildren == null)
+                    {
                         return Failure(serviceName, ProviderRegistrySnapshotState.Unavailable,
                             $"GetChildrenAsync error [{serviceName}]");
-
-                    // The providers node may have been created between Exists and
-                    // GetChildren. Re-check it if the atomic child read observed it.
-                    if (!serviceChildren.Contains(RegistryCategories.Providers))
-                        return Failure(serviceName, ProviderRegistrySnapshotState.Empty,
-                            $"no provider in [{serviceName}]");
+                    }
 
                     stat = await _zookeeper.ExistsAsync(fullPath).ConfigureAwait(false);
                     if (stat == null)
+                    {
                         return Failure(serviceName, ProviderRegistrySnapshotState.Empty,
                             $"no provider in [{serviceName}]");
+                    }
                 }
 
                 if (stat.getNumChildren() > 0)
@@ -228,8 +238,19 @@ namespace DubboNet.Registry
                 IReadOnlyList<string> children =
                     await _zookeeper.GetChildrenAsync(fullPath, this).ConfigureAwait(false);
                 if (children == null)
-                    return Failure(serviceName, ProviderRegistrySnapshotState.Unavailable,
-                        $"GetChildrenAsync error [{serviceName}]");
+                {
+                    // A provider node can disappear after Exists succeeds but
+                    // before GetChildren completes. Confirm the disappearance and
+                    // re-arm its existence watch instead of misreporting a
+                    // transient backend outage.
+                    Stat current = await _zookeeper
+                        .ExistsAsync(fullPath, this).ConfigureAwait(false);
+                    return current == null
+                        ? Failure(serviceName, ProviderRegistrySnapshotState.Empty,
+                            $"no provider in [{serviceName}]")
+                        : Failure(serviceName, ProviderRegistrySnapshotState.Unavailable,
+                            $"GetChildrenAsync error [{serviceName}]");
+                }
 
                 List<DubboServiceEndPointInfo> endPoints = new List<DubboServiceEndPointInfo>();
                 foreach (string child in children)
@@ -300,14 +321,6 @@ namespace DubboNet.Registry
                     ServiceName = serviceName,
                     Callback = callback
                 };
-            }
-        }
-
-        private bool IsWatched(string path)
-        {
-            lock (_syncRoot)
-            {
-                return _watchers.ContainsKey(path);
             }
         }
 

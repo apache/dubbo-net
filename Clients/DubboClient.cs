@@ -1125,9 +1125,7 @@ namespace DubboNet.Clients
         {
             ProviderRegistrySnapshot result =
                 await DiscoverProvidersAsync(serviceName).ConfigureAwait(false);
-            if (result.State != ProviderRegistrySnapshotState.Available
-                && !(result.State == ProviderRegistrySnapshotState.Empty
-                    && string.IsNullOrEmpty(result.ErrorInfo)))
+            if (!result.IsUsable)
             {
                 throw new DubboMetadataException(
                     $"Can not discover providers for '{serviceName}': {result.ErrorInfo}");

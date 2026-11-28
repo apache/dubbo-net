@@ -34,13 +34,20 @@ namespace UnitTestForDubboNet
             public List<string> ExistingPaths { get; } = new();
             public List<string>? Children { get; set; } = new();
             public Watcher? ReceivedWatcher { get; private set; }
+            public Watcher? ExistenceWatcher { get; private set; }
+            public List<string> ExistenceWatchPaths { get; } = new();
             public Func<string, Task<IReadOnlyList<string>>>? ChildrenReader { get; set; }
             public string? LastChildrenPath { get; private set; }
             public int ChildrenReads { get; private set; }
 
-            public Task<Stat> ExistsAsync(string path)
+            public Task<Stat> ExistsAsync(string path, Watcher? watcher = null)
             {
                 ExistingPaths.Add(path);
+                if (watcher != null)
+                {
+                    ExistenceWatcher = watcher;
+                    ExistenceWatchPaths.Add(path);
+                }
                 Nodes.TryGetValue(path, out Stat? stat);
                 return Task.FromResult(stat!);
             }
@@ -57,7 +64,7 @@ namespace UnitTestForDubboNet
         }
 
         [Fact]
-        public async Task ZooKeeperDiscovery_MissingServiceReportsExistingError()
+        public async Task ZooKeeperDiscovery_MissingServiceIsEmptyAndWatchedForCreation()
         {
             var zooKeeper = new FakeProviderZooKeeper();
             using var discovery = ProviderDiscovery.ForZooKeeper(zooKeeper, "/apps/",
@@ -65,11 +72,57 @@ namespace UnitTestForDubboNet
 
             var result = await discovery.GetProviderEndPointsAsync("com.foo.Service");
 
-            Assert.Equal(ProviderRegistrySnapshotState.InvalidRequest, result.State);
-            Assert.Equal("serviceName [com.foo.Service] is error", result.ErrorInfo);
-            Assert.Equal(new[] { "/apps/com.foo.Service/providers", "/apps/com.foo.Service" },
+            Assert.Equal(ProviderRegistrySnapshotState.Empty, result.State);
+            Assert.Equal("no provider in [com.foo.Service]", result.ErrorInfo);
+            Assert.Equal(new[]
+            {
+                "/apps/com.foo.Service/providers",
+                "/apps/com.foo.Service",
+                "/apps/com.foo.Service"
+            },
                 zooKeeper.ExistingPaths);
+            Assert.Equal(new[] { "/apps/com.foo.Service" }, zooKeeper.ExistenceWatchPaths);
             Assert.Equal(0, zooKeeper.ChildrenReads);
+        }
+
+        [Fact]
+        public async Task ZooKeeperDiscovery_MissingServiceCreationInvalidatesEmptySnapshot()
+        {
+            const string servicePath = "/apps/com.foo.Service";
+            const string providerPath = servicePath + "/providers";
+            var zooKeeper = new FakeProviderZooKeeper();
+            ProviderDiscovery? discovery = null;
+            var refreshed = new TaskCompletionSource<ProviderRegistrySnapshot>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            discovery = ProviderDiscovery.ForZooKeeper(
+                zooKeeper,
+                "/apps/",
+                new DubboClientZookeeperWatcher(null!),
+                () => { },
+                async serviceName =>
+                {
+                    ProviderRegistrySnapshot snapshot =
+                        await discovery!.GetProviderEndPointsAsync(serviceName);
+                    refreshed.TrySetResult(snapshot);
+                });
+            using (discovery)
+            {
+                ProviderRegistrySnapshot initial =
+                    await discovery.GetProviderEndPointsAsync("com.foo.Service");
+                Assert.Equal(ProviderRegistrySnapshotState.Empty, initial.State);
+
+                zooKeeper.Nodes[servicePath] = NodeWithChildren(1);
+                zooKeeper.Nodes[providerPath] = NodeWithChildren(1);
+                zooKeeper.Children!.Add(Uri.EscapeDataString(
+                    "dubbo://127.0.0.1:20880/com.foo.Service?application=demo"));
+                await Assert.IsAssignableFrom<IProviderChangeWatch>(zooKeeper.ExistenceWatcher)
+                    .NotifyChangedAsync(servicePath);
+
+                ProviderRegistrySnapshot current =
+                    await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Equal(ProviderRegistrySnapshotState.Available, current.State);
+                Assert.Single(current.EndPoints);
+            }
         }
 
         [Fact]
@@ -294,21 +347,28 @@ namespace UnitTestForDubboNet
         }
 
         [Fact]
-        public async Task ZooKeeperDiscovery_ChildrenDisappearAfterExists_ReportsReadErrorWithoutEndpoints()
+        public async Task ZooKeeperDiscovery_ProviderNodeDisappearingDuringReadIsConfirmedEmptyAndRewatched()
         {
-            var zooKeeper = new FakeProviderZooKeeper { Children = null };
-            zooKeeper.Nodes["/apps/com.foo.Service/providers"] = NodeWithChildren(1);
+            const string providerPath = "/apps/com.foo.Service/providers";
+            var zooKeeper = new FakeProviderZooKeeper();
+            zooKeeper.ChildrenReader = _ =>
+            {
+                zooKeeper.Nodes.Remove(providerPath);
+                return Task.FromResult<IReadOnlyList<string>>(null!);
+            };
+            zooKeeper.Nodes[providerPath] = NodeWithChildren(1);
             int recoveries = 0;
             using var discovery = ProviderDiscovery.ForZooKeeper(zooKeeper, "/apps/",
                 new DubboClientZookeeperWatcher(null!), () => recoveries++);
 
             var result = await discovery.GetProviderEndPointsAsync("com.foo.Service");
 
-            Assert.Equal(ProviderRegistrySnapshotState.Unavailable, result.State);
-            Assert.Equal("GetChildrenAsync error [com.foo.Service]", result.ErrorInfo);
+            Assert.Equal(ProviderRegistrySnapshotState.Empty, result.State);
+            Assert.Equal("no provider in [com.foo.Service]", result.ErrorInfo);
             Assert.Empty(result.EndPoints);
             Assert.Equal(1, zooKeeper.ChildrenReads);
             Assert.Equal(1, recoveries);
+            Assert.Equal(new[] { providerPath }, zooKeeper.ExistenceWatchPaths);
         }
 
         [Fact]

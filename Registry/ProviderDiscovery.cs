@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+using DubboNet.Clients.DataModle;
 using DubboNet.Clients.RegistryClient;
 using MyCommonHelper;
 using org.apache.zookeeper;
@@ -35,13 +36,16 @@ namespace DubboNet.Registry
             private readonly MyZookeeper _client;
             internal ZooKeeperReader(MyZookeeper client) => _client = client;
             public bool IsConnected => _client.IsConnected;
-            public Task<org.apache.zookeeper.data.Stat> ExistsAsync(string path) => _client.ExistsAsync(path);
+            public Task<org.apache.zookeeper.data.Stat> ExistsAsync(
+                string path,
+                Watcher watcher = null) => _client.ExistsAsync(path, watcher);
             public async Task<IReadOnlyList<string>> GetChildrenAsync(string path, Watcher watcher) =>
                 (await _client.GetChildrenAsync(path, watcher).ConfigureAwait(false))?.Children;
         }
 
         private readonly IProviderRegistryAdapter _adapter;
         private readonly Func<ProviderRegistryChange, Task> _onChanged;
+        private readonly ProviderRegistryRetryPolicy _retryPolicy;
         private readonly ConcurrentDictionary<string, Lazy<Task<ProviderRegistrySnapshot>>> _inFlight =
             new ConcurrentDictionary<string, Lazy<Task<ProviderRegistrySnapshot>>>(StringComparer.Ordinal);
         private int _disposed;
@@ -52,7 +56,8 @@ namespace DubboNet.Registry
             string rootPath,
             Watcher watcher,
             Func<string, Task> onRegistryChanged,
-            Action onRegistryRecovered)
+            Action onRegistryRecovered,
+            ProviderRegistryRetryPolicy retryPolicy = null)
         {
             if ((zookeeper is null) == (nacos is null))
                 throw new ArgumentException("Exactly one Provider registry is required.");
@@ -63,6 +68,7 @@ namespace DubboNet.Registry
 
             _onChanged = OnRegistryChangedAsync;
             _registryChanged = onRegistryChanged;
+            _retryPolicy = retryPolicy ?? ProviderRegistryRetryPolicy.Default;
             if (nacos != null)
             {
                 _adapter = new NacosProviderRegistry(nacos, rootPath);
@@ -82,22 +88,32 @@ namespace DubboNet.Registry
             string rootPath,
             Watcher watcher,
             Action onRegistryRecovered,
-            Func<string, Task> onRegistryChanged = null) =>
+            Func<string, Task> onRegistryChanged = null,
+            ProviderRegistryRetryPolicy retryPolicy = null) =>
             new ProviderDiscovery(
                 new ZooKeeperProviderRegistry(
                     zookeeper,
                     rootPath,
                     watcher,
                     onRegistryRecovered),
-                onRegistryChanged);
+                onRegistryChanged,
+                retryPolicy);
+
+        internal static ProviderDiscovery ForAdapter(
+            IProviderRegistryAdapter adapter,
+            Func<string, Task> onRegistryChanged,
+            ProviderRegistryRetryPolicy retryPolicy = null) =>
+            new ProviderDiscovery(adapter, onRegistryChanged, retryPolicy);
 
         private ProviderDiscovery(
             IProviderRegistryAdapter adapter,
-            Func<string, Task> onRegistryChanged)
+            Func<string, Task> onRegistryChanged,
+            ProviderRegistryRetryPolicy retryPolicy)
         {
             _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
             _onChanged = OnRegistryChangedAsync;
             _registryChanged = onRegistryChanged;
+            _retryPolicy = retryPolicy ?? ProviderRegistryRetryPolicy.Default;
         }
 
         private readonly Func<string, Task> _registryChanged;
@@ -193,8 +209,27 @@ namespace DubboNet.Registry
         {
             if (string.IsNullOrEmpty(serviceName))
                 throw new ArgumentNullException(nameof(serviceName));
-            return await _adapter.GetSnapshotAsync(serviceName, _onChanged)
-                .ConfigureAwait(false);
+            ProviderRegistrySnapshot snapshot = null;
+            for (int attempt = 1; attempt <= _retryPolicy.MaxAttempts; attempt++)
+            {
+                ThrowIfDisposed();
+                snapshot = await _adapter.GetSnapshotAsync(serviceName, _onChanged)
+                    .ConfigureAwait(false);
+                if (snapshot == null || !snapshot.IsRetryable
+                    || attempt == _retryPolicy.MaxAttempts)
+                {
+                    return snapshot ?? new ProviderRegistrySnapshot(
+                        serviceName,
+                        Array.Empty<DubboServiceEndPointInfo>(),
+                        ProviderRegistrySnapshotState.Unavailable,
+                        "Provider registry returned no snapshot.");
+                }
+
+                await _retryPolicy.DelayBeforeRetryAsync(attempt).ConfigureAwait(false);
+                ThrowIfDisposed();
+            }
+
+            return snapshot;
         }
 
         private void ThrowIfDisposed()
